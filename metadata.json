@@ -1,0 +1,5 @@
+{
+  "name": "IGCSE Study Pal",
+  "description": "An AI-powered study tool for IGCSE Pakistan students. Upload notes to generate summaries, quizzes, true/false questions, and find relevant past paper questions for your specific topics. Also includes a general note assistant.",
+  "requestFramePermissions": []
+}
