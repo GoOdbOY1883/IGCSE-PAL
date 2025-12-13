@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { GeneratedContent, McqQuestion, PastPaperQuestion, TrueFalseQuestion, Difficulty, SourcedMcqQuestion } from '../types';
 
@@ -47,7 +48,7 @@ const renderContent = (item: GeneratedContent) => {
 const SummaryDisplay: React.FC<{title: string, text: string}> = ({ title, text }) => (
     <div>
         <h3 className="text-xl font-bold text-gray-800 mb-3">{title}</h3>
-        <p className="text-gray-700 whitespace-pre-wrap">{text}</p>
+        <MarkdownRenderer content={text} />
     </div>
 );
 
@@ -61,6 +62,14 @@ const SourcedMcqDisplay: React.FC<{questions: SourcedMcqQuestion[]}> = ({ questi
         if (option === question.answer) return 'bg-green-100 border-green-400';
         if (option === answers[qIndex]) return 'bg-red-100 border-red-400';
         return 'bg-gray-50';
+    }
+
+    if (!questions || questions.length === 0) {
+        return (
+            <div className="text-center py-8">
+                <p className="text-gray-500">No matching questions found.</p>
+            </div>
+        );
     }
 
     return (
@@ -104,6 +113,18 @@ const McqDisplay: React.FC<{questions: McqQuestion[]}> = ({ questions }) => {
         if (option === question.answer) return 'bg-green-100 border-green-400';
         if (option === answers[qIndex]) return 'bg-red-100 border-red-400';
         return 'bg-gray-50';
+    }
+
+    if (!questions || questions.length === 0) {
+        return (
+             <div className="text-center py-8">
+                <h3 className="text-xl font-bold text-gray-800 mb-3">Multiple-Choice Quiz</h3>
+                <p className="text-red-500 bg-red-50 p-3 rounded-lg border border-red-200 inline-block">
+                    No questions could be generated from the text. <br/>
+                    Please try providing clearer notes or a longer text segment.
+                </p>
+            </div>
+        );
     }
 
     return (
@@ -156,45 +177,87 @@ const TrueFalseDisplay: React.FC<{questions: TrueFalseQuestion[]}> = ({ question
 }
 
 export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
-  const processLine = (line: string) => {
-    // This regex splits the line by **...** while keeping the bolded part as a separate item
-    const parts = line.split(/(\*\*.*?\*\*)/g);
+  const processText = (text: string) => {
+    // Regex for **bold** and *italic*
+    // Split by bold markers first
+    const parts = text.split(/(\*\*.*?\*\*)/g);
+    
     return parts.map((part, index) => {
+      // Handle Bold
       if (part.startsWith('**') && part.endsWith('**')) {
-        return <strong key={index}>{part.substring(2, part.length - 2)}</strong>;
+        return (
+          <strong key={index} className="font-bold text-indigo-900 bg-indigo-50 px-1 rounded-sm border-b-2 border-indigo-100">
+            {part.substring(2, part.length - 2)}
+          </strong>
+        );
       }
-      return part;
+      
+      // Handle Italic inside non-bold parts
+      const italicParts = part.split(/(\*.*?\*)/g);
+      return italicParts.map((subPart, subIndex) => {
+          if (subPart.startsWith('*') && subPart.endsWith('*') && subPart.length > 2) {
+              return <em key={`${index}-${subIndex}`} className="text-indigo-600 font-medium not-italic">{subPart.substring(1, subPart.length - 1)}</em>;
+          }
+          return subPart;
+      });
     });
   };
 
-  // Split by double (or more) newlines to get paragraphs/blocks.
   const blocks = content.split(/\n\s*\n/);
 
   return (
-    <>
+    <div className="space-y-4">
       {blocks.map((block, blockIndex) => {
-        const lines = block.split('\n').filter(line => line.trim() !== '');
-        // Check if it's a list block
+        const trimmedBlock = block.trim();
+        if (!trimmedBlock) return null;
+
+        // Headers
+        if (trimmedBlock.startsWith('### ')) {
+            return <h3 key={blockIndex} className="text-xl font-bold text-gray-800 mt-6 mb-2">{processText(trimmedBlock.replace(/^###\s+/, ''))}</h3>;
+        }
+        if (trimmedBlock.startsWith('## ')) {
+            return <h2 key={blockIndex} className="text-2xl font-bold text-indigo-700 mt-8 mb-4 border-b border-indigo-100 pb-2">{processText(trimmedBlock.replace(/^##\s+/, ''))}</h2>;
+        }
+        if (trimmedBlock.startsWith('# ')) {
+            return <h1 key={blockIndex} className="text-3xl font-extrabold text-gray-900 mt-8 mb-6">{processText(trimmedBlock.replace(/^#\s+/, ''))}</h1>;
+        }
+
+        // Blockquotes (Highlights)
+        if (trimmedBlock.startsWith('> ')) {
+            const lines = trimmedBlock.split('\n').map(l => l.replace(/^>\s*/, ''));
+            return (
+                <div key={blockIndex} className="bg-blue-50 border-l-4 border-blue-500 p-5 rounded-r-lg my-6 shadow-sm">
+                    {lines.map((line, i) => (
+                        <p key={i} className="text-blue-900 font-medium leading-relaxed mb-1 last:mb-0">
+                            {processText(line)}
+                        </p>
+                    ))}
+                </div>
+            );
+        }
+
+        // Lists
+        const lines = trimmedBlock.split('\n');
         if (lines.length > 0 && lines.every(line => line.trim().startsWith('- ') || line.trim().startsWith('* '))) {
           return (
-            <ul key={blockIndex} className="list-disc list-inside my-2 space-y-1">
+            <ul key={blockIndex} className="list-outside ml-6 space-y-2 text-gray-700 marker:text-indigo-500 marker:text-xl">
               {lines.map((line, lineIndex) => (
-                <li key={lineIndex} className="pl-2">{processLine(line.trim().substring(2))}</li>
+                <li key={lineIndex} className="pl-2 leading-relaxed">
+                    {processText(line.replace(/^[-*]\s+/, ''))}
+                </li>
               ))}
             </ul>
           );
         }
-        // Otherwise, it's a paragraph
-        if (block.trim()) {
-           return (
-            <p key={blockIndex} className="my-2">
-              {processLine(block)}
+
+        // Paragraphs
+        return (
+            <p key={blockIndex} className="text-gray-700 leading-relaxed text-lg">
+              {processText(trimmedBlock)}
             </p>
-          );
-        }
-        return null;
+        );
       })}
-    </>
+    </div>
   );
 };
 

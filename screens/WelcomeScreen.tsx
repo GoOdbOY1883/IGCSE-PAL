@@ -1,11 +1,13 @@
+
 import React from 'react';
 
 interface WelcomeScreenProps {
   onModeSelect: (mode: 'igcse' | 'general') => void;
   onViewSaved: () => void;
+  onViewSavedNotes: () => void;
 }
 
-const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onModeSelect, onViewSaved }) => {
+const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onModeSelect, onViewSaved, onViewSavedNotes }) => {
   return (
     <div className="flex flex-col items-center justify-center min-h-[80vh] text-center p-4">
       <h1 className="text-5xl md:text-6xl font-extrabold mb-4 text-gray-800 animate-fade-in-up">
@@ -35,13 +37,20 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onModeSelect, onViewSaved
             </p>
           </button>
         </div>
-        <div className="mt-8">
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
             <button
                 onClick={onViewSaved}
                 className="w-full p-6 bg-gray-50 border border-gray-300 rounded-xl shadow-md hover:shadow-lg hover:-translate-y-px transition-all duration-300 group"
             >
-                <h2 className="text-xl font-bold text-gray-700">View Saved Q&A</h2>
-                <p className="text-gray-600 mt-1">Review your saved past paper questions.</p>
+                <h2 className="text-xl font-bold text-gray-700">View Saved Questions</h2>
+                <p className="text-gray-600 mt-1">Review your saved past paper Q&A.</p>
+            </button>
+            <button
+                onClick={onViewSavedNotes}
+                className="w-full p-6 bg-blue-50 border border-blue-200 rounded-xl shadow-md hover:shadow-lg hover:-translate-y-px transition-all duration-300 group"
+            >
+                <h2 className="text-xl font-bold text-blue-800">View Saved Notes Library</h2>
+                <p className="text-blue-600 mt-1">Access your auto-saved cleaned notes.</p>
             </button>
         </div>
       </div>

@@ -1,11 +1,13 @@
+
 // FIX: Implement the Workspace component. This file was previously empty, causing module resolution errors in App.tsx and "Cannot find name" errors.
 import React, { useState, useCallback } from 'react';
-import { IgcseSubject, GeneratedContent, PastPaperQuestion, IgcseSubjectKey } from '../types';
+import { IgcseSubject, GeneratedContent, PastPaperQuestion, IgcseSubjectKey, McqQuestion } from '../types';
 import { SUBJECT_TOPICS } from '../subjectData';
 import NoteInput from './NoteInput';
 import ResultsDisplay from './ResultsDisplay';
-import { generateContentFromGemini, cleanNotesWithGemini, chunkText, findPastPaperMcqs, parseSmeMcqs } from '../services/geminiService';
+import { generateContentFromGemini, cleanNotesWithGemini, chunkText, findPastPaperMcqs, parseSmeMcqs, generateMoreSmeMcqs } from '../services/geminiService';
 import { LoadingSpinner, ArrowLeftIcon } from './icons';
+import HurryStudySession from './HurryStudySession';
 
 declare var pdfjsLib: any;
 
@@ -27,9 +29,11 @@ interface WorkspaceProps {
   setCurrentPartIndex: React.Dispatch<React.SetStateAction<number>>;
   // Callback to save past papers
   onSavePastPapers?: (subject: IgcseSubject, questions: PastPaperQuestion[]) => void;
+  // Auto-save cleaned notes
+  onAutoSaveCleanedNotes?: (content: string) => void;
 }
 
-type WorkspaceView = 'notes' | 'pastPapers' | 'smeParser';
+type WorkspaceView = 'notes' | 'pastPapers' | 'smeParser' | 'hurryStudy';
 
 const Workspace: React.FC<WorkspaceProps> = ({
   subject,
@@ -46,10 +50,12 @@ const Workspace: React.FC<WorkspaceProps> = ({
   setNoteParts,
   currentPartIndex,
   setCurrentPartIndex,
-  onSavePastPapers
+  onSavePastPapers,
+  onAutoSaveCleanedNotes
 }) => {
   const [view, setView] = useState<WorkspaceView>('notes');
   const [isCleaning, setIsCleaning] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<string>(''); // For UI feedback
   
   // State for Past Paper MCQ finder
   const [selectedChapter, setSelectedChapter] = useState('');
@@ -68,6 +74,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
     if (!notes.trim() || isCleaning) return;
 
     setIsCleaning(true);
+    setSaveStatus('');
     try {
       const cleanedNotes = await cleanNotesWithGemini(notes);
       
@@ -82,6 +89,14 @@ const Workspace: React.FC<WorkspaceProps> = ({
       }
       setNotesCleaned(true);
       setGeneratedContent([]); // Clear previous results
+      
+      // Auto-save the cleaned version
+      if (onAutoSaveCleanedNotes) {
+          onAutoSaveCleanedNotes(cleanedNotes);
+          setSaveStatus('Cleaned notes auto-saved to library! 💾');
+          setTimeout(() => setSaveStatus(''), 3000);
+      }
+
     } catch (error) {
       console.error("Failed to clean notes:", error);
       const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
@@ -96,6 +111,15 @@ const Workspace: React.FC<WorkspaceProps> = ({
     if (nextIndex < noteParts.length) {
         setCurrentPartIndex(nextIndex);
         setNotes(noteParts[nextIndex]);
+        setGeneratedContent([]); // Clear results for the new part
+    }
+  };
+
+  const handlePreviousPart = () => {
+    const prevIndex = currentPartIndex - 1;
+    if (prevIndex >= 0) {
+        setCurrentPartIndex(prevIndex);
+        setNotes(noteParts[prevIndex]);
         setGeneratedContent([]); // Clear results for the new part
     }
   };
@@ -147,6 +171,28 @@ const Workspace: React.FC<WorkspaceProps> = ({
         console.error("Failed to parse MCQs:", error);
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
         setGeneratedContent([{type: 'brief-summary', content: `Error: Could not parse MCQs.\n${errorMessage}`}]);
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  const handleGenerateMoreSme = async () => {
+    if (!smeText.trim() || isLoading) return;
+    setIsLoading(true);
+    
+    // Gather all existing MCQ questions currently displayed to avoid duplicates
+    const existingQuestions = generatedContent
+        .filter(c => c.type === 'mcqs')
+        .flatMap(c => (c.content as McqQuestion[]).map(q => q.question));
+
+    try {
+        const result = await generateMoreSmeMcqs(smeText, existingQuestions);
+        // Prepend new results so they appear at the top
+        setGeneratedContent(prev => [result, ...prev]);
+    } catch (error) {
+        console.error("Failed to generate more MCQs:", error);
+        const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+        setGeneratedContent(prev => [{type: 'brief-summary', content: `Error: Could not generate more questions.\n${errorMessage}`}, ...prev]);
     } finally {
         setIsLoading(false);
     }
@@ -221,6 +267,19 @@ const Workspace: React.FC<WorkspaceProps> = ({
     setSelectedChapter(e.target.value);
     setSelectedSubtopic(''); // Reset subtopic when chapter changes
   };
+  
+  // Check if we have generated MCQs visible
+  const hasMcqResults = generatedContent.some(c => c.type === 'mcqs');
+  
+  // RENDER HURRY STUDY VIEW
+  if (view === 'hurryStudy') {
+      return (
+          <HurryStudySession 
+              notes={notes} 
+              onBack={() => setView('notes')} 
+          />
+      );
+  }
 
   const renderLeftPanel = () => {
     switch(view) {
@@ -295,11 +354,11 @@ const Workspace: React.FC<WorkspaceProps> = ({
         case 'smeParser':
             return (
                 <div className="flex flex-col gap-4">
-                    <h2 className="text-xl font-semibold mb-2">Parse 'Save My Exams' MCQs</h2>
+                    <h2 className="text-xl font-semibold mb-2">Quiz from Text/File</h2>
                     <textarea
                         value={smeText}
                         onChange={(e) => setSmeText(e.target.value)}
-                        placeholder="Paste MCQs copied from a website like Save My Exams here, or upload a file below..."
+                        placeholder="Paste study notes or MCQs (from a past paper/website) here, or upload a file below..."
                         className="w-full h-48 p-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                      <div 
@@ -326,9 +385,18 @@ const Workspace: React.FC<WorkspaceProps> = ({
                         </button>
                     )}
                     <button onClick={handleParseSme} disabled={isLoading || !smeText.trim()} className="w-full flex items-center justify-center px-4 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
-                         {isLoading ? <><LoadingSpinner /><span className="ml-2">Parsing...</span></> : 'Parse & Create Quiz'}
+                         {isLoading ? <><LoadingSpinner /><span className="ml-2">Processing...</span></> : 'Create Quiz'}
                     </button>
-                     <p className="text-sm text-gray-500 mt-2">Convert a block of text from a file or pasted content into an interactive quiz.</p>
+                    {hasMcqResults && smeText && (
+                        <button 
+                            onClick={handleGenerateMoreSme} 
+                            disabled={isLoading}
+                            className="w-full flex items-center justify-center px-4 py-3 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all"
+                        >
+                            {isLoading ? <><LoadingSpinner /><span className="ml-2">Processing...</span></> : 'Quiz on New Topics (Different Questions)'}
+                        </button>
+                    )}
+                     <p className="text-sm text-gray-500 mt-2">Convert your notes or existing questions into an interactive quiz.</p>
                 </div>
             );
         case 'notes':
@@ -336,9 +404,16 @@ const Workspace: React.FC<WorkspaceProps> = ({
             return (
                  <div className="flex flex-col gap-6">
                     <div>
-                        <h2 className="text-xl font-semibold mb-3">
-                        {notesCleaned ? `Cleaned Notes ${noteParts.length > 1 ? `(Part ${currentPartIndex + 1}/${noteParts.length})` : ''}` : 'Your Notes'}
-                        </h2>
+                        <div className="flex justify-between items-end mb-3">
+                            <h2 className="text-xl font-semibold">
+                            {notesCleaned ? `Cleaned Notes ${noteParts.length > 1 ? `(Part ${currentPartIndex + 1}/${noteParts.length})` : ''}` : 'Your Notes'}
+                            </h2>
+                            {saveStatus && (
+                                <span className="text-sm font-medium text-green-600 animate-fade-in-up">
+                                    {saveStatus}
+                                </span>
+                            )}
+                        </div>
                         <NoteInput notes={notes} setNotes={setNotes} disabled={notesCleaned} />
                     </div>
                     {!notesCleaned ? (
@@ -351,31 +426,66 @@ const Workspace: React.FC<WorkspaceProps> = ({
                             {isCleaning ? (
                             <>
                                 <LoadingSpinner />
-                                <span className="ml-2">Cleaning Notes...</span>
+                                <span className="ml-2">Cleaning & Saving Notes...</span>
                             </>
                             ) : (
                             'Clean & Prepare Notes'
                             )}
                         </button>
-                        <p className="text-sm text-gray-500 mt-2">First, we'll use AI to remove clutter like page numbers and headers from your notes.</p>
+                        <p className="text-sm text-gray-500 mt-2">First, we'll use AI to remove clutter. The cleaned version will be automatically saved to your library.</p>
                         </div>
                     ) : (
                         <div>
                         {noteParts.length > 1 && (
-                            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center">
-                            <p className="font-semibold text-blue-800">
-                                Large notes loaded. Displaying Part {currentPartIndex + 1} of {noteParts.length}.
-                            </p>
-                            {currentPartIndex < noteParts.length - 1 && (
-                                <button
-                                onClick={handleNextPart}
-                                className="mt-2 px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600"
-                                >
-                                Continue to Next Part
-                                </button>
-                            )}
+                            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                <p className="font-semibold text-blue-800 text-center mb-2">
+                                    Large notes loaded.
+                                </p>
+                                <div className="flex justify-between items-center">
+                                    <button
+                                        onClick={handlePreviousPart}
+                                        disabled={currentPartIndex === 0}
+                                        className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${
+                                            currentPartIndex === 0
+                                            ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                            : 'bg-white border-blue-300 text-blue-600 hover:bg-blue-50'
+                                        }`}
+                                    >
+                                        Previous
+                                    </button>
+                                    <span className="text-sm text-blue-800 font-medium">
+                                        Part {currentPartIndex + 1} of {noteParts.length}
+                                    </span>
+                                    <button
+                                        onClick={handleNextPart}
+                                        disabled={currentPartIndex === noteParts.length - 1}
+                                        className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${
+                                            currentPartIndex === noteParts.length - 1
+                                            ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                            : 'bg-blue-600 border-transparent text-white hover:bg-blue-700'
+                                        }`}
+                                    >
+                                        Next
+                                    </button>
+                                </div>
                             </div>
                         )}
+                        
+                        <div className="mb-6 p-4 bg-indigo-50 border border-indigo-200 rounded-xl">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h3 className="text-lg font-bold text-indigo-900">Hurry-Study Mode</h3>
+                                    <p className="text-sm text-indigo-700">Interactive topic breakdown, assessment, and grading.</p>
+                                </div>
+                                <button 
+                                    onClick={() => setView('hurryStudy')}
+                                    className="px-4 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 shadow-md transition-all"
+                                >
+                                    Start Hurry-Study
+                                </button>
+                            </div>
+                        </div>
+
                         <h2 className="text-xl font-semibold mb-3">Generation Tools</h2>
                         <div className="grid grid-cols-2 gap-3">
                             {tools.map(tool => (
@@ -388,7 +498,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
                                 {isLoading ? (
                                 <>
                                     <LoadingSpinner />
-                                    <span className="ml-2">{notes.length > 16000 ? 'Processing...' : 'Generating...'}</span>
+                                    <span className="ml-2">{notes.length > 32000 ? 'Processing...' : 'Generating...'}</span>
                                 </>
                                 ) : (
                                 tool.label
@@ -419,24 +529,24 @@ const Workspace: React.FC<WorkspaceProps> = ({
       </header>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Left Column: Input and Controls */}
-        <div className="flex flex-col gap-4">
-            <div className="flex border-b border-gray-200">
-                <button onClick={() => setView('notes')} className={`px-4 py-2 text-sm font-medium ${view === 'notes' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Study from Notes</button>
-                {subject && <button onClick={() => setView('pastPapers')} className={`px-4 py-2 text-sm font-medium ${view === 'pastPapers' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Past Paper MCQs</button>}
-                <button onClick={() => setView('smeParser')} className={`px-4 py-2 text-sm font-medium ${view === 'smeParser' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Parse MCQ Text</button>
+            {/* Left Column: Input and Controls */}
+            <div className="flex flex-col gap-4">
+                <div className="flex border-b border-gray-200">
+                    <button onClick={() => setView('notes')} className={`px-4 py-2 text-sm font-medium ${view === 'notes' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Study from Notes</button>
+                    {subject && <button onClick={() => setView('pastPapers')} className={`px-4 py-2 text-sm font-medium ${view === 'pastPapers' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Past Paper MCQs</button>}
+                    <button onClick={() => setView('smeParser')} className={`px-4 py-2 text-sm font-medium ${view === 'smeParser' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Quiz from Text/File</button>
+                </div>
+                <div className="p-1">
+                {renderLeftPanel()}
+                </div>
             </div>
-            <div className="p-1">
-              {renderLeftPanel()}
+            
+            {/* Right Column: Results */}
+            <div>
+            <h2 className="text-xl font-semibold mb-3">Generated Content</h2>
+            <ResultsDisplay content={generatedContent} />
             </div>
         </div>
-        
-        {/* Right Column: Results */}
-        <div>
-          <h2 className="text-xl font-semibold mb-3">Generated Content</h2>
-          <ResultsDisplay content={generatedContent} />
-        </div>
-      </div>
     </div>
   );
 };

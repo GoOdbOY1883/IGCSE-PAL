@@ -1,4 +1,5 @@
-export type AppMode = 'welcome' | 'igcse-subject-select' | 'igcse-workspace' | 'general-workspace' | 'saved-questions';
+
+export type AppMode = 'welcome' | 'igcse-subject-select' | 'igcse-workspace' | 'general-workspace' | 'saved-questions' | 'saved-notes';
 
 export const IGCSE_SUBJECTS = {
   pak_studies_p1: 'PakStudies P1',
@@ -53,4 +54,40 @@ export type GeneratedContent =
 
 export interface SavedPastPapers {
   [subject: string]: PastPaperQuestion[];
+}
+
+export interface SavedNote {
+  id: string;
+  title: string;
+  subject: IgcseSubject | null;
+  content: string;
+  date: string; // ISO string
+}
+
+// --- Hurry Study Types ---
+
+export interface HurryStudyTopic {
+  id: string;
+  name: string;
+}
+
+export interface TheoryQuestion {
+  id: number;
+  question: string;
+  type: 'easy' | 'hard';
+}
+
+export interface QuestionFeedback {
+  questionId: number;
+  score: number;
+  maxScore: number;
+  feedback: string;
+  modelAnswer: string;
+}
+
+export interface TheoryGradingResult {
+  totalScore: number;
+  maxTotalScore: number;
+  feedbacks: QuestionFeedback[];
+  generalAdvice: string;
 }
