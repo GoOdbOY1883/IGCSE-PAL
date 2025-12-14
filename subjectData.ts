@@ -1,3 +1,4 @@
+
 import { IgcseSubjectKey } from './types';
 
 export interface Chapter {
@@ -35,21 +36,46 @@ export const SUBJECT_TOPICS: { [key in IgcseSubjectKey]?: Chapter[] } = {
       { name: '5. Ethics', subtopics: ['Ethics and ownership'] },
       { name: '6. Databases', subtopics: ['Database management systems'] }
   ],
+  cs_p2: [
+      { name: '7. Algorithm design and problem-solving', subtopics: ['Program development life cycle', 'Decomposition', 'Structure diagrams', 'Flowcharts', 'Pseudocode', 'Verification and Validation'] },
+      { name: '8. Programming', subtopics: ['Programming concepts', 'Arrays', 'File handling'] },
+      { name: '9. Databases', subtopics: ['Database concepts', 'SQL'] },
+      { name: '10. Boolean logic', subtopics: ['Logic gates', 'Truth tables', 'Logic circuits'] }
+  ],
   islamiyat_p1: [
       { name: 'Major themes of the Qur’an', subtopics: ['God in Himself', 'God’s relationship with the created world', 'God’s Messengers'] },
       { name: 'The history and importance of the Qur’an', subtopics: ['Revelation of the Qur’an', 'Compilation of the Qur’an', 'Structure and content', 'Major themes', 'Use in everyday life'] },
       { name: 'The life and importance of the Prophet Muhammad (pbuh)', subtopics: ['Background', 'Life in Makka', 'Life in Madina', 'The Wives of the Prophet', 'The Descendants of the Prophet'] },
       { name: 'The first Islamic community', subtopics: ['The Four Rightly Guided Caliphs', 'The ‘Ten Blessed Companions’'] }
   ],
+  islamiyat_p2: [
+      { name: 'Hadiths of the Prophet', subtopics: ['Major teachings', 'History and importance', 'Compilation'] },
+      { name: 'The Rightly Guided Caliphs', subtopics: ['Abu Bakr', 'Umar', 'Uthman', 'Ali', 'Significance of their rule'] },
+      { name: 'The Articles of Faith', subtopics: ['Oneness of God', 'Angels', 'Books', 'Prophets', 'Predestination', 'Resurrection'] },
+      { name: 'The Pillars of Islam', subtopics: ['Shahada', 'Salat', 'Zakat', 'Sawm', 'Hajj'] }
+  ],
   pak_studies_p1: [
       { name: 'Cultural and historical background to the Pakistan Movement', subtopics: ['The decline of the Mughal Empire', 'The advent of the British and the situation of the Muslims', 'Sir Syed Ahmad Khan and the Aligarh Movement', 'The emergence of the Pakistan Movement'] },
       { name: 'The emergence of Pakistan 1906–47', subtopics: ['The main events of the Pakistan Movement', 'The roles of the key individuals'] },
       { name: 'Nationhood 1947–88', subtopics: ['The problems of Partition and the early years', 'The various governments', 'The role of the key individuals'] }
+  ],
+  pak_studies_p2: [
+     { name: '1. The Land of Pakistan', subtopics: ['Location', 'Topography', 'Climate'] },
+     { name: '2. Natural Resources', subtopics: ['Water', 'Forests', 'Mineral resources', 'Fishing'] },
+     { name: '3. Power Resources', subtopics: ['Non-renewable', 'Renewable'] },
+     { name: '4. Agriculture', subtopics: ['Agricultural systems', 'Crops', 'Livestock'] },
+     { name: '5. Industry', subtopics: ['Secondary and tertiary industries'] },
+     { name: '6. Trade', subtopics: ['Internal and External trade'] },
+     { name: '7. Transport and Telecommunications', subtopics: ['Road', 'Rail', 'Air', 'Water', 'Telecommunications'] },
+     { name: '8. Population', subtopics: ['Structure', 'Growth', 'Employment'] }
   ]
 };
 
 // Map subjects that share the same syllabus content for MCQs to avoid data duplication.
+// Physics
 SUBJECT_TOPICS.physics_p1 = SUBJECT_TOPICS.physics_p2;
+SUBJECT_TOPICS.physics_p4 = SUBJECT_TOPICS.physics_p2;
+
+// Chemistry
 SUBJECT_TOPICS.chemistry_p1 = SUBJECT_TOPICS.chemistry_p2;
-SUBJECT_TOPICS.islamiyat_p2 = SUBJECT_TOPICS.islamiyat_p1;
-SUBJECT_TOPICS.pak_studies_p2 = SUBJECT_TOPICS.pak_studies_p1;
+SUBJECT_TOPICS.chemistry_p4 = SUBJECT_TOPICS.chemistry_p2;

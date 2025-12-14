@@ -1,5 +1,5 @@
 
-export type AppMode = 'welcome' | 'igcse-subject-select' | 'igcse-workspace' | 'general-workspace' | 'saved-questions' | 'saved-notes';
+export type AppMode = 'welcome' | 'igcse-subject-select' | 'igcse-workspace' | 'general-workspace' | 'saved-questions' | 'saved-notes' | 'image-editor';
 
 export const IGCSE_SUBJECTS = {
   pak_studies_p1: 'PakStudies P1',
@@ -42,6 +42,15 @@ export interface PastPaperQuestion {
   question: string;
   answer: string;
   difficulty: Difficulty;
+  sourceUrl?: string;
+  marks?: number; // Optional marks if found
+  imageUrl?: string; // For maps, diagrams, etc.
+}
+
+export interface PastPaperGradingResult {
+  score: number;
+  maxScore: number;
+  feedback: string;
 }
 
 export type GeneratedContent =

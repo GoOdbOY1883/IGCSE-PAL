@@ -1,11 +1,11 @@
 
 // FIX: Implement the Workspace component. This file was previously empty, causing module resolution errors in App.tsx and "Cannot find name" errors.
 import React, { useState, useCallback } from 'react';
-import { IgcseSubject, GeneratedContent, PastPaperQuestion, IgcseSubjectKey, McqQuestion } from '../types';
+import { IgcseSubject, GeneratedContent, PastPaperQuestion, IgcseSubjectKey, McqQuestion, IGCSE_SUBJECTS } from '../types';
 import { SUBJECT_TOPICS } from '../subjectData';
 import NoteInput from './NoteInput';
 import ResultsDisplay from './ResultsDisplay';
-import { generateContentFromGemini, cleanNotesWithGemini, chunkText, findPastPaperMcqs, parseSmeMcqs, generateMoreSmeMcqs } from '../services/geminiService';
+import { generateContentFromGemini, cleanNotesWithGemini, chunkText, findPastPaperMcqs, parseSmeMcqs, generateMoreSmeMcqs, generateTopicMcqs, findSpecificPastPaperQuestions } from '../services/geminiService';
 import { LoadingSpinner, ArrowLeftIcon } from './icons';
 import HurryStudySession from './HurryStudySession';
 
@@ -34,6 +34,7 @@ interface WorkspaceProps {
 }
 
 type WorkspaceView = 'notes' | 'pastPapers' | 'smeParser' | 'hurryStudy';
+type PracticeMode = 'mcq' | 'theory';
 
 const Workspace: React.FC<WorkspaceProps> = ({
   subject,
@@ -62,6 +63,8 @@ const Workspace: React.FC<WorkspaceProps> = ({
   const [selectedSubtopic, setSelectedSubtopic] = useState('');
   const [mcqCount, setMcqCount] = useState(5);
   const [yearRange, setYearRange] = useState(2); // Default to last 2 years (2025-2024)
+  const [practiceMode, setPracticeMode] = useState<PracticeMode>('mcq');
+  const [questionCriteria, setQuestionCriteria] = useState(''); // e.g. "4 marks"
 
   const [smeText, setSmeText] = useState('');
   const [isSmeDragging, setIsSmeDragging] = useState(false);
@@ -103,6 +106,30 @@ const Workspace: React.FC<WorkspaceProps> = ({
       setGeneratedContent([{type: 'brief-summary', content: `Error: Could not clean your notes.\n${errorMessage}`}]);
     } finally {
       setIsCleaning(false);
+    }
+  };
+
+  const handleSkipCleaning = () => {
+    if (!notes.trim()) return;
+    
+    // Chunk logic for large manual notes
+    if (notes.length > USER_CHUNK_LIMIT) {
+        const chunks = chunkText(notes, USER_CHUNK_LIMIT);
+        setNoteParts(chunks);
+        setCurrentPartIndex(0);
+        setNotes(chunks[0]);
+    } else {
+        setNoteParts([]);
+    }
+    
+    setNotesCleaned(true);
+    setGeneratedContent([]);
+    
+    // Auto-save manually added notes as "cleaned" to consistency
+    if (onAutoSaveCleanedNotes) {
+        onAutoSaveCleanedNotes(notes);
+        setSaveStatus('Notes saved to library! 💾');
+        setTimeout(() => setSaveStatus(''), 3000);
     }
   };
   
@@ -159,6 +186,43 @@ const Workspace: React.FC<WorkspaceProps> = ({
         setIsLoading(false);
     }
   };
+
+  const handleGenerateMcqsFromTopic = async () => {
+      if (!subject || !selectedChapter || !selectedSubtopic || isLoading) return;
+      setIsLoading(true);
+      setGeneratedContent([]);
+      try {
+          const fullTopic = `${selectedChapter} - ${selectedSubtopic}`;
+          const result = await generateTopicMcqs(subject, fullTopic, mcqCount);
+          setGeneratedContent([result]);
+      } catch (error) {
+          console.error("Failed to generate Topic MCQs:", error);
+          const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+          setGeneratedContent([{type: 'brief-summary', content: `Error: Could not generate MCQs.\n${errorMessage}`}]);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+  
+  const handleFindTheoryQuestions = async () => {
+      if (!subject || !selectedChapter || !selectedSubtopic || !questionCriteria || isLoading) return;
+      setIsLoading(true);
+      setGeneratedContent([]);
+      try {
+          const fullTopic = `${selectedChapter} - ${selectedSubtopic}`;
+          const result = await findSpecificPastPaperQuestions(subject, fullTopic, questionCriteria, 3, yearRange); // Default 3 Qs for specific search, passed yearRange
+          setGeneratedContent([result]);
+          if (subject && onSavePastPapers && Array.isArray(result.content) && result.content.length > 0) {
+            onSavePastPapers(subject, result.content as PastPaperQuestion[]);
+          }
+      } catch (error) {
+          console.error("Failed to find specific questions:", error);
+          const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+          setGeneratedContent([{type: 'brief-summary', content: `Error: Could not find questions.\n${errorMessage}`}]);
+      } finally {
+          setIsLoading(false);
+      }
+  }
 
   const handleParseSme = async () => {
     if (!smeText.trim() || isLoading) return;
@@ -260,7 +324,9 @@ const Workspace: React.FC<WorkspaceProps> = ({
   const tools = subject ? igcseTools : generalTools;
 
   // --- Derived state for MCQ topic selection ---
-  const availableChapters = (subject && SUBJECT_TOPICS[Object.keys(SUBJECT_TOPICS).find(k => SUBJECT_TOPICS[k as IgcseSubjectKey] && k.includes(subject.split(' ')[0].toLowerCase())) as IgcseSubjectKey]) || [];
+  // Fix: Use exact subject key lookup instead of fuzzy text matching to ensure correct topics are loaded.
+  const subjectKey = Object.keys(IGCSE_SUBJECTS).find(key => IGCSE_SUBJECTS[key as IgcseSubjectKey] === subject) as IgcseSubjectKey | undefined;
+  const availableChapters = (subjectKey && SUBJECT_TOPICS[subjectKey]) || [];
   const availableSubtopics = availableChapters.find(c => c.name === selectedChapter)?.subtopics || [];
 
   const handleChapterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -268,6 +334,13 @@ const Workspace: React.FC<WorkspaceProps> = ({
     setSelectedSubtopic(''); // Reset subtopic when chapter changes
   };
   
+  // Check if subject typically has MCQs
+  const hasOfficialMcqs = subjectKey && (
+      subjectKey.includes('physics') || 
+      subjectKey.includes('chemistry') || 
+      subjectKey.includes('biology')
+  );
+
   // Check if we have generated MCQs visible
   const hasMcqResults = generatedContent.some(c => c.type === 'mcqs');
   
@@ -286,8 +359,24 @@ const Workspace: React.FC<WorkspaceProps> = ({
         case 'pastPapers':
             return (
                 <div className="flex flex-col gap-4">
-                    <h2 className="text-xl font-semibold mb-2">Practice Past Paper MCQs</h2>
+                    <h2 className="text-xl font-semibold mb-2">Practice Questions</h2>
                     
+                    {/* Mode Tabs */}
+                    <div className="flex border-b border-gray-200 mb-2">
+                        <button
+                            onClick={() => setPracticeMode('mcq')}
+                            className={`flex-1 py-2 text-sm font-medium text-center ${practiceMode === 'mcq' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            MCQs
+                        </button>
+                        <button
+                            onClick={() => setPracticeMode('theory')}
+                            className={`flex-1 py-2 text-sm font-medium text-center ${practiceMode === 'theory' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Questions
+                        </button>
+                    </div>
+
                     <div>
                         <label htmlFor="chapter" className="block text-sm font-medium text-gray-700">Chapter</label>
                         <select
@@ -315,40 +404,91 @@ const Workspace: React.FC<WorkspaceProps> = ({
                         </select>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label htmlFor="q_count" className="block text-sm font-medium text-gray-700">Number of Questions</label>
-                            <input 
-                                type="number" 
-                                id="q_count"
-                                value={mcqCount}
-                                min="1"
-                                max="10"
-                                onChange={(e) => setMcqCount(parseInt(e.target.value, 10))}
-                                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                            />
-                        </div>
-                        <div>
-                           <label htmlFor="year_range" className="block text-sm font-medium text-gray-700">Year Range</label>
-                           <select 
-                                id="year_range"
-                                value={yearRange}
-                                onChange={(e) => setYearRange(parseInt(e.target.value, 10))}
-                                className="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-white border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                           >
-                                <option value={1}>Last year (2025)</option>
-                                <option value={2}>Last 2 years (2024-25)</option>
-                                <option value={3}>Last 3 years (2023-25)</option>
-                                <option value={5}>Last 5 years (2021-25)</option>
-                                <option value={8}>Last 8 years (2018-25)</option>
-                           </select>
-                        </div>
-                    </div>
+                    {practiceMode === 'mcq' ? (
+                        <>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="q_count" className="block text-sm font-medium text-gray-700">Questions</label>
+                                    <input 
+                                        type="number" 
+                                        id="q_count"
+                                        value={mcqCount}
+                                        min="1"
+                                        max="10"
+                                        onChange={(e) => setMcqCount(parseInt(e.target.value, 10))}
+                                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-gray-900"
+                                    />
+                                </div>
+                                {hasOfficialMcqs && (
+                                    <div>
+                                    <label htmlFor="year_range" className="block text-sm font-medium text-gray-700">Year Range</label>
+                                    <select 
+                                            id="year_range"
+                                            value={yearRange}
+                                            onChange={(e) => setYearRange(parseInt(e.target.value, 10))}
+                                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-white border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                    >
+                                            <option value={1}>Last year (2025)</option>
+                                            <option value={2}>Last 2 years (2024-25)</option>
+                                            <option value={3}>Last 3 years (2023-25)</option>
+                                            <option value={5}>Last 5 years (2021-25)</option>
+                                            <option value={8}>Last 8 years (2018-25)</option>
+                                    </select>
+                                    </div>
+                                )}
+                            </div>
 
-                    <button onClick={handleFindMcqs} disabled={isLoading || !selectedChapter || !selectedSubtopic} className="w-full flex items-center justify-center px-4 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
-                        {isLoading ? <><LoadingSpinner /><span className="ml-2">Finding...</span></> : 'Find MCQs'}
-                    </button>
-                    <p className="text-sm text-gray-500 mt-2">Find real O-Level past paper MCQs for a specific topic without uploading notes.</p>
+                            {hasOfficialMcqs ? (
+                                <button onClick={handleFindMcqs} disabled={isLoading || !selectedChapter || !selectedSubtopic} className="w-full flex items-center justify-center px-4 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+                                    {isLoading ? <><LoadingSpinner /><span className="ml-2">Finding...</span></> : 'Find Past Paper MCQs'}
+                                </button>
+                            ) : (
+                                <>
+                                    <button onClick={handleGenerateMcqsFromTopic} disabled={isLoading || !selectedChapter || !selectedSubtopic} className="w-full flex items-center justify-center px-4 py-3 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+                                        {isLoading ? <><LoadingSpinner /><span className="ml-2">Generating...</span></> : 'Convert Topic to MCQs'}
+                                    </button>
+                                    <p className="text-xs text-gray-500 mt-2">
+                                        This subject typically doesn't have a pure MCQ paper. We will generate MCQs from the theory content for practice.
+                                    </p>
+                                </>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                             <div>
+                                <label htmlFor="criteria" className="block text-sm font-medium text-gray-700">Question Type/Criteria</label>
+                                <input 
+                                    type="text" 
+                                    id="criteria"
+                                    value={questionCriteria}
+                                    onChange={(e) => setQuestionCriteria(e.target.value)}
+                                    placeholder="e.g. 4 marks, 7 marks, Map skills..."
+                                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-gray-900"
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="year_range_theory" className="block text-sm font-medium text-gray-700">Year Range</label>
+                                <select 
+                                        id="year_range_theory"
+                                        value={yearRange}
+                                        onChange={(e) => setYearRange(parseInt(e.target.value, 10))}
+                                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-white border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                >
+                                        <option value={1}>Last year (2025)</option>
+                                        <option value={2}>Last 2 years (2024-25)</option>
+                                        <option value={3}>Last 3 years (2023-25)</option>
+                                        <option value={5}>Last 5 years (2021-25)</option>
+                                        <option value={8}>Last 8 years (2018-25)</option>
+                                </select>
+                            </div>
+                            <button onClick={handleFindTheoryQuestions} disabled={isLoading || !selectedChapter || !selectedSubtopic || !questionCriteria} className="w-full flex items-center justify-center px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+                                {isLoading ? <><LoadingSpinner /><span className="ml-2">Searching...</span></> : 'Find Specific Questions'}
+                            </button>
+                             <p className="text-xs text-gray-500 mt-2">
+                                Find questions matching specific criteria (e.g. marks) for this topic.
+                            </p>
+                        </>
+                    )}
                 </div>
             );
         case 'smeParser':
@@ -418,21 +558,32 @@ const Workspace: React.FC<WorkspaceProps> = ({
                     </div>
                     {!notesCleaned ? (
                         <div>
-                        <button
-                            onClick={handleCleanNotes}
-                            disabled={isCleaning || !notes.trim()}
-                            className="w-full flex items-center justify-center px-4 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all"
-                        >
-                            {isCleaning ? (
-                            <>
-                                <LoadingSpinner />
-                                <span className="ml-2">Cleaning & Saving Notes...</span>
-                            </>
-                            ) : (
-                            'Clean & Prepare Notes'
-                            )}
-                        </button>
-                        <p className="text-sm text-gray-500 mt-2">First, we'll use AI to remove clutter. The cleaned version will be automatically saved to your library.</p>
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            <button
+                                onClick={handleCleanNotes}
+                                disabled={isCleaning || !notes.trim()}
+                                className="flex-1 flex items-center justify-center px-4 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all"
+                            >
+                                {isCleaning ? (
+                                <>
+                                    <LoadingSpinner />
+                                    <span className="ml-2">Cleaning & Saving Notes...</span>
+                                </>
+                                ) : (
+                                'Clean & Prepare Notes'
+                                )}
+                            </button>
+                            <button
+                                onClick={handleSkipCleaning}
+                                disabled={isCleaning || !notes.trim()}
+                                className="flex-shrink-0 px-6 py-3 bg-gray-100 text-gray-700 font-semibold rounded-lg border border-gray-300 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                            >
+                                Skip Cleaning
+                            </button>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-2">
+                             Use "Clean & Prepare" to remove clutter with AI, or "Skip Cleaning" if your notes are already ready. Both save to your library.
+                        </p>
                         </div>
                     ) : (
                         <div>
@@ -533,7 +684,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
             <div className="flex flex-col gap-4">
                 <div className="flex border-b border-gray-200">
                     <button onClick={() => setView('notes')} className={`px-4 py-2 text-sm font-medium ${view === 'notes' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Study from Notes</button>
-                    {subject && <button onClick={() => setView('pastPapers')} className={`px-4 py-2 text-sm font-medium ${view === 'pastPapers' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Past Paper MCQs</button>}
+                    {subject && <button onClick={() => setView('pastPapers')} className={`px-4 py-2 text-sm font-medium ${view === 'pastPapers' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Practice Questions</button>}
                     <button onClick={() => setView('smeParser')} className={`px-4 py-2 text-sm font-medium ${view === 'smeParser' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Quiz from Text/File</button>
                 </div>
                 <div className="p-1">

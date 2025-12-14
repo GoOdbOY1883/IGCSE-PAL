@@ -1,6 +1,8 @@
 
 import React, { useState } from 'react';
-import { GeneratedContent, McqQuestion, PastPaperQuestion, TrueFalseQuestion, Difficulty, SourcedMcqQuestion } from '../types';
+import { GeneratedContent, McqQuestion, PastPaperQuestion, TrueFalseQuestion, Difficulty, SourcedMcqQuestion, PastPaperGradingResult } from '../types';
+import { gradePastPaperAnswer } from '../services/geminiService';
+import { LoadingSpinner } from './icons';
 
 interface ResultsDisplayProps {
   content: GeneratedContent[];
@@ -39,7 +41,7 @@ const renderContent = (item: GeneratedContent) => {
     case 'true-false':
       return <TrueFalseDisplay questions={item.content} />;
     case 'past-papers':
-        return <PastPaperDisplay questions={item.content} />;
+        return <InteractivePastPaperDisplay questions={item.content} />;
     default:
       return null;
   }
@@ -283,11 +285,177 @@ export const PastPaperDisplay: React.FC<{questions: PastPaperQuestion[], showTit
                         </span>
                     )}
                 </summary>
+                
                 <div className="mt-3 pt-3 border-t text-gray-700">
+                    {q.imageUrl && (
+                        <div className="mb-4 rounded-lg overflow-hidden border border-gray-200">
+                            <img src={q.imageUrl} alt="Question Diagram" className="w-full h-auto object-contain max-h-96 bg-white" />
+                        </div>
+                    )}
                     <p className="font-bold">Model Answer:</p>
                     <MarkdownRenderer content={q.answer} />
+                    {q.sourceUrl && (
+                        <div className="mt-2 text-right">
+                            <a 
+                                href={q.sourceUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="text-xs text-blue-500 hover:text-blue-700 hover:underline flex items-center justify-end gap-1"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                                Source found via Google Search
+                            </a>
+                        </div>
+                    )}
                 </div>
             </details>
+        ))}
+    </div>
+);
+
+// New Interactive Component for Grading
+const SinglePastPaperQuestion: React.FC<{ q: PastPaperQuestion, index: number }> = ({ q, index }) => {
+    const [userAnswer, setUserAnswer] = useState('');
+    const [isGrading, setIsGrading] = useState(false);
+    const [gradingResult, setGradingResult] = useState<PastPaperGradingResult | null>(null);
+    const [showModelAnswer, setShowModelAnswer] = useState(false);
+    const [imageError, setImageError] = useState(false);
+
+    const handleGrade = async () => {
+        if (!userAnswer.trim()) return;
+        setIsGrading(true);
+        try {
+            const result = await gradePastPaperAnswer(q.question, q.answer, userAnswer);
+            setGradingResult(result);
+            setShowModelAnswer(true);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setIsGrading(false);
+        }
+    };
+
+    return (
+        <div className="mb-8 bg-gray-50 p-6 rounded-xl border border-gray-200">
+             <div className="flex justify-between items-start mb-4">
+                <h4 className="font-bold text-lg text-gray-800 flex-1">
+                    <span className="text-blue-600 mr-2">Q{index + 1}.</span> 
+                    {q.question}
+                </h4>
+                {q.difficulty && (
+                    <span className={`ml-3 px-2 py-1 text-xs font-bold rounded-full whitespace-nowrap ${getDifficultyColor(q.difficulty)}`}>
+                        {q.difficulty}
+                    </span>
+                )}
+            </div>
+
+            {q.imageUrl && !imageError && (
+                <div className="mb-6 rounded-lg overflow-hidden border border-gray-200 shadow-sm">
+                    <img 
+                        src={q.imageUrl} 
+                        alt="Question Diagram" 
+                        className="w-full h-auto object-contain max-h-96 bg-white" 
+                        onError={() => setImageError(true)}
+                    />
+                </div>
+            )}
+            {q.imageUrl && imageError && (
+                <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-center">
+                    <p className="text-sm text-yellow-800 mb-2">⚠️ Unable to load image preview.</p>
+                    <a 
+                        href={q.imageUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-sm font-semibold text-blue-600 hover:underline"
+                    >
+                        Click here to view image source
+                    </a>
+                </div>
+            )}
+
+            {/* Answer Input */}
+            {!gradingResult ? (
+                <div className="mt-4">
+                    <textarea 
+                        className="w-full p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none min-h-[120px] bg-white text-gray-900"
+                        placeholder="Type your answer here to grade it..."
+                        value={userAnswer}
+                        onChange={(e) => setUserAnswer(e.target.value)}
+                    />
+                    <div className="flex justify-between items-center mt-3">
+                         <button 
+                            onClick={() => setShowModelAnswer(!showModelAnswer)} 
+                            className="text-sm text-gray-500 hover:text-blue-600 underline"
+                        >
+                            {showModelAnswer ? "Hide Model Answer" : "Reveal Answer Only"}
+                        </button>
+                        <button 
+                            onClick={handleGrade}
+                            disabled={isGrading || !userAnswer.trim()}
+                            className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all flex items-center"
+                        >
+                            {isGrading ? <><LoadingSpinner /><span className="ml-2">Grading...</span></> : 'Grade My Answer'}
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <div className="mt-4 animate-fade-in-up">
+                    <div className="p-4 bg-white rounded-lg border border-gray-200 mb-4">
+                         <p className="text-xs font-bold text-gray-500 uppercase">Your Answer</p>
+                         <p className="text-gray-800 italic">{userAnswer}</p>
+                    </div>
+
+                    <div className={`p-4 rounded-lg border-l-4 ${gradingResult.score >= gradingResult.maxScore / 2 ? 'bg-green-50 border-green-500' : 'bg-orange-50 border-orange-500'}`}>
+                        <div className="flex justify-between items-center mb-2">
+                            <h5 className="font-bold text-lg">Examiner Feedback</h5>
+                            <span className="text-xl font-extrabold">{gradingResult.score}/{gradingResult.maxScore} Marks</span>
+                        </div>
+                        <p className="text-gray-800">{gradingResult.feedback}</p>
+                    </div>
+                    <button 
+                         onClick={() => { setGradingResult(null); setShowModelAnswer(false); }}
+                         className="mt-3 text-sm text-blue-600 hover:underline"
+                    >
+                        Try Again
+                    </button>
+                </div>
+            )}
+
+            {/* Model Answer Display */}
+            {showModelAnswer && (
+                <div className="mt-6 pt-6 border-t border-gray-200 animate-fade-in-up">
+                    <div className="flex justify-between items-center mb-2">
+                         <p className="font-bold text-gray-700">Official Model Answer:</p>
+                         {q.sourceUrl && (
+                            <a 
+                                href={q.sourceUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="text-xs text-blue-500 hover:text-blue-700 hover:underline flex items-center gap-1"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                                Source
+                            </a>
+                        )}
+                    </div>
+                    <div className="bg-green-50 p-4 rounded-lg border border-green-100 text-gray-800">
+                        <MarkdownRenderer content={q.answer} />
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export const InteractivePastPaperDisplay: React.FC<{questions: PastPaperQuestion[]}> = ({ questions }) => (
+    <div>
+        <h3 className="text-xl font-bold text-gray-800 mb-6">Interactive Past Paper Questions</h3>
+        {questions.map((q, i) => (
+            <SinglePastPaperQuestion key={i} q={q} index={i} />
         ))}
     </div>
 );

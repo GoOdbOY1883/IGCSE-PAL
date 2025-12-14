@@ -18,6 +18,9 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
     const [selectedTopic, setSelectedTopic] = useState<string>('');
     const [explanation, setExplanation] = useState<string>('');
     
+    // Cache for explanations to avoid regenerating them
+    const [explanationCache, setExplanationCache] = useState<{[key: string]: string}>({});
+    
     // Theory State
     const [theoryEasy, setTheoryEasy] = useState<TheoryQuestion[]>([]);
     const [theoryHard, setTheoryHard] = useState<TheoryQuestion[]>([]);
@@ -29,6 +32,7 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
     const [mcqQuestions, setMcqQuestions] = useState<McqQuestion[]>([]);
     const [tfAnswers, setTfAnswers] = useState<{[key: number]: boolean}>({});
     const [mcqAnswers, setMcqAnswers] = useState<{[key: number]: string}>({});
+    const [seenDrillQuestions, setSeenDrillQuestions] = useState<{ tf: string[], mcq: string[] }>({ tf: [], mcq: [] });
 
     const [isLoading, setIsLoading] = useState(false);
 
@@ -53,11 +57,20 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
 
     const handleTopicSelect = async (topicName: string) => {
         setSelectedTopic(topicName);
+        
+        // Check cache first
+        if (explanationCache[topicName]) {
+            setExplanation(explanationCache[topicName]);
+            setStage('explaining');
+            return;
+        }
+
         setStage('explaining');
         setIsLoading(true);
         try {
             const exp = await explainTopicSimple(notes, topicName);
             setExplanation(exp);
+            setExplanationCache(prev => ({...prev, [topicName]: exp}));
         } catch (e) {
             console.error(e);
         } finally {
@@ -103,6 +116,38 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
             setMcqQuestions(mcq);
             setTfAnswers({});
             setMcqAnswers({});
+            
+            // Initialize seen list
+            setSeenDrillQuestions({
+                tf: tf.map(q => q.statement),
+                mcq: mcq.map(q => q.question)
+            });
+            
+            setStage('drill-tf');
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const continueDrill = async () => {
+        setIsLoading(true);
+        try {
+            // Pass current seen list to excluded
+            const { tf, mcq } = await generateDrillQuestions(notes, selectedTopic, seenDrillQuestions);
+            
+            setTfQuestions(tf);
+            setMcqQuestions(mcq);
+            setTfAnswers({});
+            setMcqAnswers({});
+            
+            // Update seen list
+            setSeenDrillQuestions(prev => ({
+                tf: [...prev.tf, ...tf.map(q => q.statement)],
+                mcq: [...prev.mcq, ...mcq.map(q => q.question)]
+            }));
+            
             setStage('drill-tf');
         } catch (e) {
             console.error(e);
@@ -222,10 +267,16 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
                         </div>
                     )}
                     {!isLoading && (
-                        <div className="mt-10 flex justify-end pt-6 border-t border-gray-100">
+                        <div className="mt-10 flex flex-col sm:flex-row justify-end gap-4 pt-6 border-t border-gray-100">
+                            <button 
+                                onClick={startDrill}
+                                className="px-6 py-3 bg-white border-2 border-indigo-200 text-indigo-700 text-lg font-bold rounded-xl hover:bg-indigo-50 hover:border-indigo-300 transition-all"
+                            >
+                                Skip to Rapid Fire Drill →
+                            </button>
                             <button 
                                 onClick={startTheory}
-                                className="px-8 py-4 bg-indigo-600 text-white text-lg font-bold rounded-xl hover:bg-indigo-700 shadow-lg hover:shadow-indigo-500/30 transform hover:-translate-y-0.5 transition-all"
+                                className="px-8 py-3 bg-indigo-600 text-white text-lg font-bold rounded-xl hover:bg-indigo-700 shadow-lg hover:shadow-indigo-500/30 transform hover:-translate-y-0.5 transition-all"
                             >
                                 Start Assessment →
                             </button>
@@ -236,8 +287,11 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
         );
     }
 
-    const renderTheoryInput = (questions: TheoryQuestion[], title: string, subtitle: string, nextAction: () => void, isHard: boolean) => (
+    const renderTheoryInput = (questions: TheoryQuestion[], title: string, subtitle: string, nextAction: () => void, onPrev: () => void, isHard: boolean) => (
         <div className="animate-fade-in-up max-w-3xl mx-auto px-4 pb-20">
+            <button onClick={onPrev} className="mb-4 text-gray-500 hover:text-indigo-600 flex items-center gap-2 transition-colors">
+                <ArrowLeftIcon /> Back to {isHard ? 'Easy Questions' : 'Notes'}
+            </button>
             <ProgressBar />
             <div className={`text-center mb-8 p-6 rounded-2xl ${isHard ? 'bg-orange-50 text-orange-900' : 'bg-blue-50 text-blue-900'}`}>
                 <h2 className="text-3xl font-extrabold mb-2">{title}</h2>
@@ -265,7 +319,13 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
                     </div>
                 ))}
             </div>
-            <div className="mt-10 flex justify-center">
+            <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
+                <button 
+                    onClick={onPrev}
+                    className="px-10 py-4 bg-gray-200 text-gray-700 text-lg font-bold rounded-xl hover:bg-gray-300 transition-all"
+                >
+                    Back
+                </button>
                 <button 
                     onClick={nextAction}
                     disabled={Object.keys(theoryAnswers).filter(k => questions.some(q => q.id === parseInt(k))).length < questions.length}
@@ -282,8 +342,8 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
         </div>
     );
 
-    if (stage === 'theory-easy') return renderTheoryInput(theoryEasy, "Phase 1: Easy Questions", "Warm up with 2-3 line answers.", () => setStage('theory-hard'), false);
-    if (stage === 'theory-hard') return renderTheoryInput(theoryHard, "Phase 2: Hard Questions", "Challenge yourself with 3-6 line detailed answers.", submitTheory, true);
+    if (stage === 'theory-easy') return renderTheoryInput(theoryEasy, "Phase 1: Easy Questions", "Warm up with 2-3 line answers.", () => setStage('theory-hard'), () => setStage('explaining'), false);
+    if (stage === 'theory-hard') return renderTheoryInput(theoryHard, "Phase 2: Hard Questions", "Challenge yourself with 3-6 line detailed answers.", submitTheory, () => setStage('theory-easy'), true);
 
     if (stage === 'grading-theory') return <div className="flex flex-col items-center justify-center h-96"><LoadingSpinner /><p className="mt-6 text-xl text-gray-700 font-semibold animate-pulse">Grading your answers against Cambridge standards...</p></div>;
 
@@ -377,6 +437,9 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
     if (stage === 'drill-tf') {
         return (
             <div className="animate-fade-in-up max-w-3xl mx-auto px-4 pb-20">
+                <button onClick={() => setStage('results-theory')} className="mb-4 text-gray-500 hover:text-indigo-600 flex items-center gap-2 transition-colors">
+                    <ArrowLeftIcon /> Back to Results
+                </button>
                 <ProgressBar />
                 <h2 className="text-3xl font-extrabold mb-8 text-center text-gray-800">True or False Drill</h2>
                 {isLoading ? <div className="flex justify-center"><LoadingSpinner /></div> : (
@@ -417,6 +480,9 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
     if (stage === 'drill-mcq') {
          return (
             <div className="animate-fade-in-up max-w-3xl mx-auto px-4 pb-20">
+                <button onClick={() => setStage('drill-tf')} className="mb-4 text-gray-500 hover:text-indigo-600 flex items-center gap-2 transition-colors">
+                    <ArrowLeftIcon /> Back to True/False
+                </button>
                 <ProgressBar />
                 <h2 className="text-3xl font-extrabold mb-8 text-center text-gray-800">MCQ Drill</h2>
                 <div className="space-y-8">
@@ -441,7 +507,13 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
                         </div>
                     ))}
                 </div>
-                <div className="flex justify-center mt-12">
+                <div className="flex flex-col sm:flex-row gap-4 justify-center mt-12">
+                     <button 
+                        onClick={() => setStage('drill-tf')}
+                        className="px-10 py-4 bg-gray-200 text-gray-700 text-lg font-bold rounded-xl hover:bg-gray-300 transition-all"
+                     >
+                        Back
+                     </button>
                      <button 
                         onClick={() => setStage('results-drill')} 
                         className="px-10 py-4 bg-green-600 text-white text-lg font-bold rounded-xl shadow-lg hover:bg-green-700 hover:-translate-y-1 transition-all"
@@ -511,6 +583,9 @@ const HurryStudySession: React.FC<HurryStudySessionProps> = ({ notes, onBack }) 
                 <div className="mt-12 flex flex-col sm:flex-row gap-4 justify-center">
                     <button onClick={() => setStage('topic-selection')} className="px-8 py-4 bg-white border-2 border-gray-200 text-gray-600 font-bold rounded-xl hover:bg-gray-50 transition-all">
                         Finish Session
+                    </button>
+                    <button onClick={continueDrill} disabled={isLoading} className="px-8 py-4 bg-teal-600 text-white font-bold rounded-xl hover:bg-teal-700 shadow-lg transition-all flex items-center justify-center">
+                        {isLoading ? <LoadingSpinner /> : 'Load More Questions'}
                     </button>
                     <button onClick={startTheory} className="px-8 py-4 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-lg transition-all">
                         Restart Topic Theory

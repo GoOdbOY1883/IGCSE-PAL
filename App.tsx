@@ -7,6 +7,10 @@ import IgcseSubjectSelectionScreen from './screens/IgcseSubjectSelectionScreen';
 import Workspace from './components/Workspace';
 import SavedQuestionsScreen from './screens/SavedQuestionsScreen';
 import SavedNotesScreen from './screens/SavedNotesScreen';
+import ImageEditorScreen from './screens/ImageEditorScreen';
+
+const SAVED_PAPERS_KEY = 'igcseStudyPalSavedPapers';
+const SAVED_NOTES_KEY = 'igcseStudyPalSavedNotes';
 
 const App: React.FC = () => {
   const [appMode, setAppMode] = useState<AppMode>('welcome');
@@ -20,38 +24,27 @@ const App: React.FC = () => {
   const [noteParts, setNoteParts] = useState<string[]>([]);
   const [currentPartIndex, setCurrentPartIndex] = useState<number>(0);
 
-  // State for saved items
-  const [savedPastPapers, setSavedPastPapers] = useState<SavedPastPapers>({});
-  const [savedNotes, setSavedNotes] = useState<SavedNote[]>([]);
-
-  const SAVED_PAPERS_KEY = 'igcseStudyPalSavedPapers';
-  const SAVED_NOTES_KEY = 'igcseStudyPalSavedNotes';
-
-  // Load saved data from localStorage on initial mount
-  useEffect(() => {
-    // Load saved past papers
-    const savedPapersJSON = localStorage.getItem(SAVED_PAPERS_KEY);
-    if (savedPapersJSON) {
-        try {
-            const savedData = JSON.parse(savedPapersJSON);
-            setSavedPastPapers(savedData || {});
-        } catch (error) {
-            console.error("Failed to parse saved papers:", error);
-        }
+  // State for saved items with Lazy Initialization to prevent overwriting data on load
+  const [savedPastPapers, setSavedPastPapers] = useState<SavedPastPapers>(() => {
+    try {
+      const savedPapersJSON = localStorage.getItem(SAVED_PAPERS_KEY);
+      return savedPapersJSON ? JSON.parse(savedPapersJSON) : {};
+    } catch (error) {
+      console.error("Failed to parse saved papers:", error);
+      return {};
     }
+  });
 
-    // Load saved notes
-    const savedNotesJSON = localStorage.getItem(SAVED_NOTES_KEY);
-    if (savedNotesJSON) {
-        try {
-            const savedData = JSON.parse(savedNotesJSON);
-            setSavedNotes(savedData || []);
-        } catch (error) {
-            console.error("Failed to parse saved notes:", error);
-        }
+  const [savedNotes, setSavedNotes] = useState<SavedNote[]>(() => {
+    try {
+      const savedNotesJSON = localStorage.getItem(SAVED_NOTES_KEY);
+      return savedNotesJSON ? JSON.parse(savedNotesJSON) : [];
+    } catch (error) {
+      console.error("Failed to parse saved notes:", error);
+      return [];
     }
-  }, []);
-  
+  });
+
   // Persist saved items when they change
   useEffect(() => {
       localStorage.setItem(SAVED_PAPERS_KEY, JSON.stringify(savedPastPapers));
@@ -78,6 +71,12 @@ const App: React.FC = () => {
 
   const handleViewSavedNotes = () => {
       setAppMode('saved-notes');
+  }
+
+  const handleImageEditor = () => {
+      setAppMode('image-editor');
+      setSubject(null);
+      resetWorkspace();
   }
 
   const handleSubjectSelect = (subjectKey: IgcseSubjectKey, subjectName: IgcseSubject) => {
@@ -173,7 +172,7 @@ const App: React.FC = () => {
   const renderScreen = () => {
     switch (appMode) {
       case 'welcome':
-        return <WelcomeScreen onModeSelect={handleModeSelect} onViewSaved={handleViewSaved} onViewSavedNotes={handleViewSavedNotes} />;
+        return <WelcomeScreen onModeSelect={handleModeSelect} onViewSaved={handleViewSaved} onViewSavedNotes={handleViewSavedNotes} onImageEditor={handleImageEditor} />;
       
       case 'igcse-subject-select':
         return <IgcseSubjectSelectionScreen onSubjectSelect={handleSubjectSelect} onBack={handleBackToWelcome}/>;
@@ -183,6 +182,9 @@ const App: React.FC = () => {
 
       case 'saved-notes':
         return <SavedNotesScreen savedNotes={savedNotes} onLoad={handleLoadSavedNote} onDelete={handleDeleteSavedNote} onBack={handleBackToWelcome} />;
+        
+      case 'image-editor':
+        return <ImageEditorScreen onBack={handleBackToWelcome} />;
 
       case 'igcse-workspace':
       case 'general-workspace':
@@ -208,7 +210,7 @@ const App: React.FC = () => {
         );
 
       default:
-        return <WelcomeScreen onModeSelect={handleModeSelect} onViewSaved={handleViewSaved} onViewSavedNotes={handleViewSavedNotes} />;
+        return <WelcomeScreen onModeSelect={handleModeSelect} onViewSaved={handleViewSaved} onViewSavedNotes={handleViewSavedNotes} onImageEditor={handleImageEditor} />;
     }
   };
 

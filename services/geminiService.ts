@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { GeneratedContent, IgcseSubject, McqQuestion, PastPaperQuestion, SourcedMcqQuestion, TrueFalseQuestion, HurryStudyTopic, TheoryQuestion, TheoryGradingResult } from "../types";
+import { GeneratedContent, IgcseSubject, McqQuestion, PastPaperQuestion, SourcedMcqQuestion, TrueFalseQuestion, HurryStudyTopic, TheoryQuestion, TheoryGradingResult, PastPaperGradingResult } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -198,9 +198,11 @@ const generatePastPapersFromNotes = async (notes: string, subject: IgcseSubject 
     1.  **Question**: The exact text of the question.
     2.  **Answer**: A detailed model answer (use bolding for key terms).
     3.  **Difficulty**: Easy, Medium, or Hard.
+    4.  **Source URL**: The link to the website or PDF where this question was found (mandatory).
+    5.  **Image**: If the question relies on a diagram or map, find a direct URL to that image and include it as "imageUrl".
     
     Output Format: Return a SINGLE JSON array of objects inside a markdown code block (e.g., \`\`\`json ... \`\`\`).
-    Schema: [{ "question": "...", "answer": "...", "difficulty": "..." }]`;
+    Schema: [{ "question": "...", "answer": "...", "difficulty": "...", "sourceUrl": "...", "imageUrl": "..." }]`;
 
     try {
             const response = await ai.models.generateContent({
@@ -215,7 +217,22 @@ const generatePastPapersFromNotes = async (notes: string, subject: IgcseSubject 
         const text = response.text;
         // Parse JSON manually from the text response
         const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsedJson = JSON.parse(cleanedText);
+        let parsedJson = JSON.parse(cleanedText) as PastPaperQuestion[];
+
+        // Extract grounding chunks to verify or fill source URLs
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+        
+        if (groundingChunks && groundingChunks.length > 0) {
+            parsedJson = parsedJson.map((item, index) => {
+                const chunk = groundingChunks[index % groundingChunks.length];
+                // If sourceUrl is missing or invalid placeholder, use the grounding chunk URI
+                if ((!item.sourceUrl || item.sourceUrl.includes('placeholder')) && chunk?.web?.uri) {
+                    return { ...item, sourceUrl: chunk.web.uri };
+                }
+                return item;
+            });
+        }
+
         return { type: 'past-papers', content: parsedJson };
 
     } catch (error) {
@@ -303,6 +320,9 @@ export const cleanNotesWithGemini = async (rawNotes: string): Promise<string> =>
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
+            config: {
+                model: "gemini-2.5-flash",
+            },
         });
         return response.text.trim();
     } catch (error) {
@@ -371,6 +391,133 @@ export const findPastPaperMcqs = async (subject: IgcseSubject, topic: string, co
     } catch (error) {
         console.error("Error finding past paper MCQs with Gemini:", error);
         throw new Error("Failed to find past paper MCQs. The model may have returned an invalid format or an error occurred.");
+    }
+}
+
+export const generateTopicMcqs = async (subject: IgcseSubject, topic: string, count: number): Promise<GeneratedContent> => {
+    const prompt = `You are an expert IGCSE tutor. The subject "${subject}" typically does not have a pure MCQ paper, or the user needs extra practice.
+    
+    Task: Convert the theory/content of the topic "${topic}" into ${count} high-quality Multiple Choice Questions (MCQs).
+    
+    Instructions:
+    1. Focus on key syllabus concepts for "${topic}".
+    2. Create challenging, exam-style questions.
+    3. Provide exactly 4 options per question.
+    4. Provide the correct answer.
+    
+    Return a single JSON array:
+    [{ "question": "...", "options": ["..."], "answer": "..." }]
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: getResponseSchema('mcqs'),
+            }
+        });
+        const parsed = JSON.parse(response.text);
+        return { type: 'mcqs', content: parsed };
+    } catch(e) {
+        console.error(e);
+        throw new Error("Failed to generate topic MCQs");
+    }
+}
+
+export const findSpecificPastPaperQuestions = async (subject: IgcseSubject, topic: string, criteria: string, count: number, yearRange: number): Promise<GeneratedContent> => {
+    const startYear = 2025 - yearRange + 1;
+    const endYear = 2025;
+    const yearText = yearRange === 1 ? `from the year ${endYear}` : `from the years ${startYear} to ${endYear}`;
+
+    // Uses Google Search to find specific types of questions (e.g. "4 marks").
+    const prompt = `You are an expert IGCSE tutor.
+    Task: Find ${count} authentic IGCSE past paper questions for the subject "${subject}" and topic "${topic}" that match the following criteria: "${criteria}".
+    
+    Target Year Range: ${yearText}.
+    
+    Instructions:
+    1. Use Google Search to find real questions from past papers matching the criteria within the year range.
+    2. If exact matches are hard to find, you may adapt real questions or generate highly realistic ones in the exact style of the exam, but PRIORITIZE finding real ones.
+    3. Provide a model answer for each.
+    4. Mark difficulty based on the marks/complexity.
+    5. **MAPS/DIAGRAMS**: If the question refers to a map, graph, figure, or diagram:
+       - You MUST use Google Search to find a URL to that specific image or the worksheet containing it.
+       - Include this URL in the "imageUrl" field.
+       - If you can't find a direct image, find a URL to the PDF/page where the map is located.
+    
+    Output Format: Single JSON array in markdown block.
+    Schema: [{ "question": "...", "answer": "...", "difficulty": "Medium", "sourceUrl": "...", "imageUrl": "..." }]
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                tools: [{ googleSearch: {} }]
+            }
+        });
+        
+        const text = response.text;
+        const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        let parsedJson = JSON.parse(cleanedText) as PastPaperQuestion[];
+
+         // Extract grounding chunks
+         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+        
+         if (groundingChunks && groundingChunks.length > 0) {
+             parsedJson = parsedJson.map((item, index) => {
+                 const chunk = groundingChunks[index % groundingChunks.length];
+                 if ((!item.sourceUrl || item.sourceUrl.includes('placeholder')) && chunk?.web?.uri) {
+                     return { ...item, sourceUrl: chunk.web.uri };
+                 }
+                 return item;
+             });
+         }
+ 
+         return { type: 'past-papers', content: parsedJson };
+
+    } catch(e) {
+        console.error(e);
+        throw new Error("Failed to find specific past paper questions.");
+    }
+}
+
+export const gradePastPaperAnswer = async (question: string, modelAnswer: string, studentAnswer: string): Promise<PastPaperGradingResult> => {
+    const prompt = `You are an expert IGCSE Examiner.
+    
+    Task: Grade the student's answer for the following question.
+    
+    Question: "${question}"
+    Official Model Answer/Marking Scheme: "${modelAnswer}"
+    Student Answer: "${studentAnswer}"
+    
+    Instructions:
+    1. Determine a likely max score for this question based on its complexity if not provided (usually 2-6 marks).
+    2. Score the student's answer fairly.
+    3. Provide concise but helpful feedback on what they missed or got right.
+    
+    Return JSON:
+    {
+        "score": number,
+        "maxScore": number,
+        "feedback": "string"
+    }`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json"
+            }
+        });
+        return JSON.parse(response.text);
+    } catch (e) {
+        console.error(e);
+        throw new Error("Failed to grade answer.");
     }
 }
 
@@ -470,6 +617,41 @@ export const generateMoreSmeMcqs = async (rawText: string, existingQuestions: st
     }
 };
 
+export const editImageWithGemini = async (base64Image: string, mimeType: string, prompt: string): Promise<string> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash-image",
+            contents: {
+                parts: [
+                    {
+                        inlineData: {
+                            data: base64Image,
+                            mimeType: mimeType
+                        }
+                    },
+                    {
+                        text: prompt
+                    }
+                ]
+            }
+        });
+        
+        const parts = response.candidates?.[0]?.content?.parts;
+        if (parts) {
+            for (const part of parts) {
+                if (part.inlineData) {
+                    return part.inlineData.data;
+                }
+            }
+        }
+        throw new Error("No image generated by the model.");
+
+    } catch (error) {
+        console.error("Error in editImageWithGemini:", error);
+        throw error;
+    }
+}
+
 // --- Hurry Study Services ---
 
 export const extractTopicsFromNotes = async (notes: string): Promise<HurryStudyTopic[]> => {
@@ -479,7 +661,7 @@ export const extractTopicsFromNotes = async (notes: string): Promise<HurryStudyT
     
     Notes:
     """
-    ${notes.slice(0, 25000)}
+    ${notes.slice(0, 80000)}
     """`;
 
     try {
@@ -512,6 +694,11 @@ export const extractTopicsFromNotes = async (notes: string): Promise<HurryStudyT
 export const explainTopicSimple = async (notes: string, topicName: string): Promise<string> => {
     const prompt = `Based strictly on the provided notes, explain the topic "${topicName}" in a simple, easy-to-grasp manner for a student.
     
+    INSTRUCTION: 
+    - Locate the section for "${topicName}" in the notes.
+    - Ignore other topics in the notes.
+    - Summarize and explain ONLY the content relevant to "${topicName}".
+    
     **Format Instructions:**
     - Use "## " for main sections (e.g., Introduction, Key Processes, Significance).
     - Use "### " for sub-sections.
@@ -522,7 +709,7 @@ export const explainTopicSimple = async (notes: string, topicName: string): Prom
     
     Notes:
     """
-    ${notes.slice(0, 30000)}
+    ${notes.slice(0, 100000)}
     """`;
 
     const response = await ai.models.generateContent({
@@ -533,22 +720,27 @@ export const explainTopicSimple = async (notes: string, topicName: string): Prom
 }
 
 export const generateTheoryQuestions = async (notes: string, topicName: string): Promise<{easy: TheoryQuestion[], hard: TheoryQuestion[]}> => {
-    const prompt = `You are an examiner creating a test based ONLY on the provided study notes for the topic "${topicName}".
+    const prompt = `You are an examiner creating a test based ONLY on the provided study notes.
+    
+    TARGET TOPIC: "${topicName}"
     
     Task:
-    1. Generate 5 "Easy" questions (answerable in 2-3 lines).
-    2. Generate 5 "Hard" questions (answerable in 3-6 lines).
+    1. LOCATE the specific section(s) in the notes that correspond to the Target Topic: "${topicName}".
+    2. IGNORE all other sections, chapters, or topics found in the notes.
+    3. Generate 5 "Easy" questions (answerable in 2-3 lines) derived strictly from the "${topicName}" section.
+    4. Generate 5 "Hard" questions (answerable in 3-6 lines) derived strictly from the "${topicName}" section.
     
     CRITICAL INSTRUCTIONS:
-    - **Strict Grounding:** You must ONLY ask questions where the answer is explicitly found in the "Notes" section below.
-    - **No Outside Knowledge:** Do not ask about facts, dates, or concepts not present in the text, even if they are relevant to the topic in real life.
+    - **Scope Enforcement:** If the notes contain multiple topics, DO NOT ask questions about topics other than "${topicName}".
+    - **Strict Grounding:** You must ONLY ask questions where the answer is explicitly found in the text segment for "${topicName}".
+    - **No Outside Knowledge:** Do not ask about facts, dates, or concepts not present in the text.
     - **Verification:** Before outputting a question, verify that the answer exists in the provided text.
     
     Return a JSON object: { "easy": [{ "question": "..." }], "hard": [{ "question": "..." }] }
     
     Notes:
     """
-    ${notes.slice(0, 30000)}
+    ${notes.slice(0, 100000)}
     """`;
 
     const response = await ai.models.generateContent({
@@ -571,9 +763,11 @@ export const gradeTheoryQuestions = async (notes: string, topicName: string, que
 
     const prompt = `You are a Cambridge O Level examiner. Grade the following student answers based on the provided notes for topic "${topicName}".
     
+    Context: The notes may contain multiple topics. Focus ONLY on the section regarding "${topicName}".
+    
     For each question:
     1. Score it (Easy questions out of 3, Hard questions out of 6).
-    2. Provide constructive feedback and the correct model answer.
+    2. Provide constructive feedback and the correct model answer based on the "${topicName}" section of the notes.
     
     Also provide general advice on how to improve.
     
@@ -592,7 +786,7 @@ export const gradeTheoryQuestions = async (notes: string, topicName: string, que
     
     Context Notes:
     """
-    ${notes.slice(0, 20000)}
+    ${notes.slice(0, 100000)}
     """`;
 
     const response = await ai.models.generateContent({
@@ -614,14 +808,38 @@ export const gradeTheoryQuestions = async (notes: string, topicName: string, que
     return parsed;
 }
 
-export const generateDrillQuestions = async (notes: string, topicName: string): Promise<{tf: TrueFalseQuestion[], mcq: McqQuestion[]}> => {
-    const prompt = `Generate drill questions for topic "${topicName}" based STRICTLY on the notes.
+export const generateDrillQuestions = async (notes: string, topicName: string, previousQuestions?: { tf: string[], mcq: string[] }): Promise<{tf: TrueFalseQuestion[], mcq: McqQuestion[]}> => {
+    
+    let exclusionText = "";
+    if (previousQuestions) {
+        exclusionText = `
+    **EXCLUSION LIST:**
+    Do NOT generate questions that are identical or very similar to the following:
+    
+    True/False:
+    ${previousQuestions.tf.slice(-20).map(q => `- ${q}`).join('\n')}
+    
+    MCQs:
+    ${previousQuestions.mcq.slice(-20).map(q => `- ${q}`).join('\n')}
+    `;
+    }
+
+    const prompt = `Generate drill questions for the topic: "${topicName}".
+    
+    INSTRUCTIONS:
+    1. Focus EXCLUSIVELY on the content within the notes that relates to "${topicName}".
+    2. IGNORE material related to other topics found in the notes.
+    
+    ${exclusionText}
+    
+    Task:
     1. 10 True/False questions.
     2. 10 Multiple Choice Questions (4 options).
     
     CRITICAL: 
-    - All questions must be answerable purely from the provided notes.
+    - All questions must be answerable purely from the provided notes section for "${topicName}".
     - Do not use outside knowledge.
+    - Do not ask questions from other topics present in the file.
     
     Return JSON:
     {
@@ -631,7 +849,7 @@ export const generateDrillQuestions = async (notes: string, topicName: string): 
     
     Notes:
     """
-    ${notes.slice(0, 30000)}
+    ${notes.slice(0, 100000)}
     """`;
 
     const response = await ai.models.generateContent({
