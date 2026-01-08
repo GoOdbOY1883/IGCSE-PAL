@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { GeneratedContent, McqQuestion, PastPaperQuestion, TrueFalseQuestion, Difficulty, SourcedMcqQuestion, PastPaperGradingResult } from '../types';
+import { GeneratedContent, McqQuestion, PastPaperQuestion, TrueFalseQuestion, Difficulty, SourcedMcqQuestion, PastPaperGradingResult, Flashcard } from '../types';
 import { gradePastPaperAnswer } from '../services/geminiService';
 import { LoadingSpinner } from './icons';
 
@@ -40,6 +40,8 @@ const renderContent = (item: GeneratedContent) => {
       return <SourcedMcqDisplay questions={item.content} />;
     case 'true-false':
       return <TrueFalseDisplay questions={item.content} />;
+    case 'flashcards':
+      return <FlashcardDisplay flashcards={item.content} />;
     case 'past-papers':
         return <InteractivePastPaperDisplay questions={item.content} />;
     default:
@@ -54,16 +56,55 @@ const SummaryDisplay: React.FC<{title: string, text: string}> = ({ title, text }
     </div>
 );
 
+const isOptionCorrect = (option: string, answer: string): boolean => {
+    if (typeof option !== 'string' || typeof answer !== 'string') return false;
+    const cleanOpt = option.trim();
+    const cleanAns = answer.trim();
+
+    if (cleanOpt === cleanAns) return true;
+
+    const getLetter = (s: string) => {
+        const match = s.match(/^[\(]?([A-D])[\.\)]/i);
+        if (match) return match[1].toUpperCase();
+        if (/^[A-D]$/i.test(s)) return s.toUpperCase();
+        return null;
+    };
+
+    const optLetter = getLetter(cleanOpt);
+    const ansLetter = getLetter(cleanAns);
+
+    if (optLetter && ansLetter && optLetter === ansLetter) return true;
+
+    const normalize = (s: string) => s.replace(/^[\(]?[A-D][\.\)]\s*/i, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (normalize(cleanOpt) === normalize(cleanAns)) return true;
+    
+    return false;
+};
+
 const SourcedMcqDisplay: React.FC<{questions: SourcedMcqQuestion[]}> = ({ questions }) => {
     const [answers, setAnswers] = useState<{[key: number]: string}>({});
     const [submitted, setSubmitted] = useState(false);
 
     const getButtonClass = (qIndex: number, option: string) => {
-        if (!submitted) return 'bg-white hover:bg-gray-100';
-        const question = questions[qIndex];
-        if (option === question.answer) return 'bg-green-100 border-green-400';
-        if (option === answers[qIndex]) return 'bg-red-100 border-red-400';
-        return 'bg-gray-50';
+        const isSelected = answers[qIndex] === option;
+        
+        if (!submitted) {
+            return isSelected 
+                ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500 text-blue-800 font-medium shadow-sm' 
+                : 'bg-white hover:bg-gray-50 border-gray-300 text-gray-700';
+        }
+
+        const isCorrect = isOptionCorrect(option, questions[qIndex].answer);
+        
+        if (isCorrect) {
+            return 'bg-green-100 border-green-500 text-green-900 font-bold shadow-md ring-1 ring-green-500';
+        }
+        
+        if (isSelected && !isCorrect) {
+            return 'bg-red-100 border-red-500 text-red-900 font-medium opacity-100 shadow-sm';
+        }
+
+        return 'bg-gray-50 border-gray-200 text-gray-400 opacity-60';
     }
 
     if (!questions || questions.length === 0) {
@@ -78,28 +119,30 @@ const SourcedMcqDisplay: React.FC<{questions: SourcedMcqQuestion[]}> = ({ questi
         <div>
             <h3 className="text-xl font-bold text-gray-800 mb-4">Past Paper MCQs</h3>
             {questions.map((q, i) => (
-                <div key={i} className="mb-6 p-4 border rounded-lg bg-gray-50">
-                    <p className="font-semibold mb-2">{i+1}. {q.question}</p>
-                    <div className="flex flex-col gap-2">
+                <div key={i} className="mb-6 p-4 border rounded-xl bg-gray-50">
+                    <p className="font-semibold mb-3 text-lg text-gray-800">{i+1}. {q.question}</p>
+                    <div className="flex flex-col gap-2.5">
                         {q.options.map((opt, optIndex) => (
                             <button key={optIndex} onClick={() => !submitted && setAnswers(p => ({...p, [i]: opt}))} 
-                                className={`p-2 text-left border rounded-md ${getButtonClass(i, opt)} ${!submitted ? 'cursor-pointer' : 'cursor-default'} ${answers[i] === opt && !submitted ? 'ring-2 ring-blue-500' : ''}`}>
+                                className={`p-3 text-left border rounded-lg transition-all duration-200 ${getButtonClass(i, opt)} ${!submitted ? 'cursor-pointer' : 'cursor-default'}`}>
                                 {opt}
                             </button>
                         ))}
                     </div>
                      {submitted && (
-                        <div className="mt-3 pt-3 border-t text-sm text-gray-600">
-                            <p><strong>Correct Answer:</strong> {q.answer}</p>
-                            <p className="mt-1"><strong>Source:</strong> {q.sourcePaper}</p>
-                            <a href={q.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                                View Source
+                        <div className="mt-4 pt-3 border-t border-gray-200 text-sm text-gray-700 bg-white p-3 rounded-lg">
+                            <p className="font-medium text-green-700">Correct Answer: {q.answer}</p>
+                            <p className="mt-1 text-gray-500"><strong>Source:</strong> {q.sourcePaper}</p>
+                            <a href={q.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline mt-1 inline-block">
+                                View Source Document
                             </a>
                         </div>
                     )}
                 </div>
             ))}
-            <button onClick={() => setSubmitted(true)} disabled={submitted} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg disabled:bg-gray-400">Check Answers</button>
+            <button onClick={() => setSubmitted(true)} disabled={submitted} className="mt-4 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow hover:bg-blue-700 disabled:bg-gray-400 disabled:shadow-none transition-colors">
+                Check Answers
+            </button>
         </div>
     );
 }
@@ -110,11 +153,25 @@ const McqDisplay: React.FC<{questions: McqQuestion[]}> = ({ questions }) => {
     const [submitted, setSubmitted] = useState(false);
 
     const getButtonClass = (qIndex: number, option: string) => {
-        if (!submitted) return 'bg-white hover:bg-gray-100';
-        const question = questions[qIndex];
-        if (option === question.answer) return 'bg-green-100 border-green-400';
-        if (option === answers[qIndex]) return 'bg-red-100 border-red-400';
-        return 'bg-gray-50';
+        const isSelected = answers[qIndex] === option;
+        
+        if (!submitted) {
+            return isSelected 
+                ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500 text-blue-800 font-medium shadow-sm' 
+                : 'bg-white hover:bg-gray-50 border-gray-300 text-gray-700';
+        }
+
+        const isCorrect = isOptionCorrect(option, questions[qIndex].answer);
+        
+        if (isCorrect) {
+            return 'bg-green-100 border-green-500 text-green-900 font-bold shadow-md ring-1 ring-green-500';
+        }
+        
+        if (isSelected && !isCorrect) {
+            return 'bg-red-100 border-red-500 text-red-900 font-medium opacity-100 shadow-sm';
+        }
+
+        return 'bg-gray-50 border-gray-200 text-gray-400 opacity-60';
     }
 
     if (!questions || questions.length === 0) {
@@ -133,19 +190,26 @@ const McqDisplay: React.FC<{questions: McqQuestion[]}> = ({ questions }) => {
         <div>
             <h3 className="text-xl font-bold text-gray-800 mb-4">Multiple-Choice Quiz</h3>
             {questions.map((q, i) => (
-                <div key={i} className="mb-6">
-                    <p className="font-semibold mb-2">{i+1}. {q.question}</p>
-                    <div className="flex flex-col gap-2">
+                <div key={i} className="mb-8 border-b border-gray-100 pb-6 last:border-0">
+                    <p className="font-semibold mb-3 text-lg text-gray-800">{i+1}. {q.question}</p>
+                    <div className="flex flex-col gap-2.5">
                         {q.options.map((opt, optIndex) => (
                             <button key={optIndex} onClick={() => !submitted && setAnswers(p => ({...p, [i]: opt}))} 
-                                className={`p-2 text-left border rounded-md ${getButtonClass(i, opt)} ${!submitted ? 'cursor-pointer' : 'cursor-default'} ${answers[i] === opt && !submitted ? 'ring-2 ring-blue-500' : ''}`}>
+                                className={`p-3 text-left border rounded-lg transition-all duration-200 ${getButtonClass(i, opt)} ${!submitted ? 'cursor-pointer' : 'cursor-default'}`}>
                                 {opt}
                             </button>
                         ))}
                     </div>
+                    {submitted && (
+                        <div className="mt-3 text-sm font-medium text-green-700 animate-fade-in-up">
+                            Correct Answer: {q.answer}
+                        </div>
+                    )}
                 </div>
             ))}
-            <button onClick={() => setSubmitted(true)} disabled={submitted} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg disabled:bg-gray-400">Check Answers</button>
+            <button onClick={() => setSubmitted(true)} disabled={submitted} className="mt-2 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow hover:bg-blue-700 disabled:bg-gray-400 disabled:shadow-none transition-colors">
+                Check Answers
+            </button>
         </div>
     );
 }
@@ -178,14 +242,102 @@ const TrueFalseDisplay: React.FC<{questions: TrueFalseQuestion[]}> = ({ question
     );
 }
 
+const FlashcardDisplay: React.FC<{flashcards: Flashcard[]}> = ({ flashcards }) => {
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [isFlipped, setIsFlipped] = useState(false);
+
+    if (!flashcards || flashcards.length === 0) {
+         return (
+             <div className="text-center py-8">
+                <h3 className="text-xl font-bold text-gray-800 mb-3">Flashcards</h3>
+                <p className="text-gray-500">No flashcards could be generated from the text.</p>
+            </div>
+        );
+    }
+
+    const handleNext = () => {
+        setIsFlipped(false);
+        setCurrentIndex((prev) => (prev + 1) % flashcards.length);
+    };
+
+    const handlePrev = () => {
+        setIsFlipped(false);
+        setCurrentIndex((prev) => (prev - 1 + flashcards.length) % flashcards.length);
+    };
+    
+    const currentCard = flashcards[currentIndex];
+
+    return (
+        <div className="flex flex-col items-center select-none">
+            <h3 className="text-xl font-bold text-gray-800 mb-6">Flashcards ({currentIndex + 1}/{flashcards.length})</h3>
+            
+            <div 
+                className="w-full max-w-lg h-80 perspective-1000 cursor-pointer group"
+                onClick={() => setIsFlipped(!isFlipped)}
+                style={{ perspective: '1000px' }}
+            >
+                <div 
+                    className="relative w-full h-full duration-500 transition-all" 
+                    style={{ 
+                        transformStyle: 'preserve-3d', 
+                        transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' 
+                    }}
+                >
+                    
+                    <div 
+                        className="absolute w-full h-full bg-white border-2 border-indigo-100 rounded-2xl shadow-lg flex flex-col items-center justify-center p-8 backface-hidden hover:border-indigo-300 transition-colors" 
+                        style={{ backfaceVisibility: 'hidden' }}
+                    >
+                        <span className="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-4">Term</span>
+                        <h4 className="text-3xl font-extrabold text-gray-800 text-center">{currentCard.term}</h4>
+                        <p className="absolute bottom-6 text-gray-400 text-sm flex items-center gap-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Tap to flip
+                        </p>
+                    </div>
+
+                    <div 
+                        className="absolute w-full h-full bg-indigo-50 border-2 border-indigo-500 rounded-2xl shadow-lg flex flex-col items-center justify-center p-8 backface-hidden" 
+                        style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+                    >
+                         <span className="text-xs font-bold text-indigo-600 uppercase tracking-widest mb-4">Definition</span>
+                         <p className="text-lg text-gray-800 text-center leading-relaxed font-medium">{currentCard.definition}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex gap-4 mt-8">
+                <button 
+                    onClick={(e) => { e.stopPropagation(); handlePrev(); }} 
+                    className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full font-semibold transition-colors flex items-center gap-1"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Previous
+                </button>
+                <button 
+                    onClick={(e) => { e.stopPropagation(); handleNext(); }} 
+                    className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full font-semibold transition-colors flex items-center gap-1"
+                >
+                    Next
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    )
+}
+
 export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
   const processText = (text: string) => {
-    // Regex for **bold** and *italic*
-    // Split by bold markers first
+    if (typeof text !== 'string') return '';
     const parts = text.split(/(\*\*.*?\*\*)/g);
     
     return parts.map((part, index) => {
-      // Handle Bold
       if (part.startsWith('**') && part.endsWith('**')) {
         return (
           <strong key={index} className="font-bold text-indigo-900 bg-indigo-50 px-1 rounded-sm border-b-2 border-indigo-100">
@@ -194,7 +346,6 @@ export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => 
         );
       }
       
-      // Handle Italic inside non-bold parts
       const italicParts = part.split(/(\*.*?\*)/g);
       return italicParts.map((subPart, subIndex) => {
           if (subPart.startsWith('*') && subPart.endsWith('*') && subPart.length > 2) {
@@ -205,6 +356,7 @@ export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => 
     });
   };
 
+  if (typeof content !== 'string') return null;
   const blocks = content.split(/\n\s*\n/);
 
   return (
@@ -213,7 +365,6 @@ export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => 
         const trimmedBlock = block.trim();
         if (!trimmedBlock) return null;
 
-        // Headers
         if (trimmedBlock.startsWith('### ')) {
             return <h3 key={blockIndex} className="text-xl font-bold text-gray-800 mt-6 mb-2">{processText(trimmedBlock.replace(/^###\s+/, ''))}</h3>;
         }
@@ -224,7 +375,6 @@ export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => 
             return <h1 key={blockIndex} className="text-3xl font-extrabold text-gray-900 mt-8 mb-6">{processText(trimmedBlock.replace(/^#\s+/, ''))}</h1>;
         }
 
-        // Blockquotes (Highlights)
         if (trimmedBlock.startsWith('> ')) {
             const lines = trimmedBlock.split('\n').map(l => l.replace(/^>\s*/, ''));
             return (
@@ -238,7 +388,6 @@ export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => 
             );
         }
 
-        // Lists
         const lines = trimmedBlock.split('\n');
         if (lines.length > 0 && lines.every(line => line.trim().startsWith('- ') || line.trim().startsWith('* '))) {
           return (
@@ -252,7 +401,6 @@ export const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => 
           );
         }
 
-        // Paragraphs
         return (
             <p key={blockIndex} className="text-gray-700 leading-relaxed text-lg">
               {processText(trimmedBlock)}
@@ -315,7 +463,6 @@ export const PastPaperDisplay: React.FC<{questions: PastPaperQuestion[], showTit
     </div>
 );
 
-// New Interactive Component for Grading
 const SinglePastPaperQuestion: React.FC<{ q: PastPaperQuestion, index: number }> = ({ q, index }) => {
     const [userAnswer, setUserAnswer] = useState('');
     const [isGrading, setIsGrading] = useState(false);
@@ -375,7 +522,6 @@ const SinglePastPaperQuestion: React.FC<{ q: PastPaperQuestion, index: number }>
                 </div>
             )}
 
-            {/* Answer Input */}
             {!gradingResult ? (
                 <div className="mt-4">
                     <textarea 
@@ -423,7 +569,6 @@ const SinglePastPaperQuestion: React.FC<{ q: PastPaperQuestion, index: number }>
                 </div>
             )}
 
-            {/* Model Answer Display */}
             {showModelAnswer && (
                 <div className="mt-6 pt-6 border-t border-gray-200 animate-fade-in-up">
                     <div className="flex justify-between items-center mb-2">

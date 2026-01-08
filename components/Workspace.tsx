@@ -1,7 +1,7 @@
 
 // FIX: Implement the Workspace component. This file was previously empty, causing module resolution errors in App.tsx and "Cannot find name" errors.
-import React, { useState, useCallback } from 'react';
-import { IgcseSubject, GeneratedContent, PastPaperQuestion, IgcseSubjectKey, McqQuestion, IGCSE_SUBJECTS } from '../types';
+import React, { useState, useCallback, useMemo } from 'react';
+import { IgcseSubject, GeneratedContent, PastPaperQuestion, IgcseSubjectKey, McqQuestion, IGCSE_SUBJECTS, TrueFalseQuestion } from '../types';
 import { SUBJECT_TOPICS } from '../subjectData';
 import NoteInput from './NoteInput';
 import ResultsDisplay from './ResultsDisplay';
@@ -58,10 +58,12 @@ const Workspace: React.FC<WorkspaceProps> = ({
   const [isCleaning, setIsCleaning] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string>(''); // For UI feedback
   
-  // State for Past Paper MCQ finder
-  const [selectedChapter, setSelectedChapter] = useState('');
-  const [selectedSubtopic, setSelectedSubtopic] = useState('');
+  // State for Past Paper MCQ finder - UPDATED to arrays for multi-select
+  const [selectedChapters, setSelectedChapters] = useState<string[]>([]);
+  const [selectedSubtopics, setSelectedSubtopics] = useState<string[]>([]);
+  
   const [mcqCount, setMcqCount] = useState(5);
+  const [theoryCount, setTheoryCount] = useState(3);
   const [yearRange, setYearRange] = useState(2); // Default to last 2 years (2025-2024)
   const [practiceMode, setPracticeMode] = useState<PracticeMode>('mcq');
   const [questionCriteria, setQuestionCriteria] = useState(''); // e.g. "4 marks"
@@ -154,9 +156,21 @@ const Workspace: React.FC<WorkspaceProps> = ({
   const handleGenerate = async (type: GeneratedContent['type']) => {
     if (!notes.trim() || isLoading) return;
     setIsLoading(true);
-    setGeneratedContent([]);
+    
+    const existingQuestions = generatedContent
+      .filter(item => item.type === type)
+      .flatMap(item => {
+          if (type === 'mcqs' && Array.isArray(item.content)) {
+              return (item.content as McqQuestion[]).map(q => q.question);
+          }
+          if (type === 'true-false' && Array.isArray(item.content)) {
+              return (item.content as TrueFalseQuestion[]).map(q => q.statement);
+          }
+          return [];
+      });
+
     try {
-      const result = await generateContentFromGemini(notes, subject, type);
+      const result = await generateContentFromGemini(notes, subject, type, existingQuestions);
       setGeneratedContent(prev => [result, ...prev]);
       if (subject && onSavePastPapers && result.type === 'past-papers' && Array.isArray(result.content) && result.content.length > 0) {
         onSavePastPapers(subject, result.content as PastPaperQuestion[]);
@@ -170,12 +184,20 @@ const Workspace: React.FC<WorkspaceProps> = ({
     }
   };
   
+  const getCombinedTopicString = () => {
+      // If specific subtopics are selected, use them. Otherwise use selected chapters.
+      if (selectedSubtopics.length > 0) {
+          return selectedSubtopics.join(', ');
+      }
+      return selectedChapters.join(', ');
+  };
+
   const handleFindMcqs = async () => {
-    if (!subject || !selectedChapter || !selectedSubtopic || isLoading) return;
+    if (!subject || selectedChapters.length === 0 || isLoading) return;
     setIsLoading(true);
     setGeneratedContent([]);
     try {
-        const fullTopic = `${selectedChapter} - ${selectedSubtopic}`;
+        const fullTopic = getCombinedTopicString();
         const result = await findPastPaperMcqs(subject, fullTopic, mcqCount, yearRange);
         setGeneratedContent([result]);
     } catch (error) {
@@ -188,11 +210,11 @@ const Workspace: React.FC<WorkspaceProps> = ({
   };
 
   const handleGenerateMcqsFromTopic = async () => {
-      if (!subject || !selectedChapter || !selectedSubtopic || isLoading) return;
+      if (!subject || selectedChapters.length === 0 || isLoading) return;
       setIsLoading(true);
       setGeneratedContent([]);
       try {
-          const fullTopic = `${selectedChapter} - ${selectedSubtopic}`;
+          const fullTopic = getCombinedTopicString();
           const result = await generateTopicMcqs(subject, fullTopic, mcqCount);
           setGeneratedContent([result]);
       } catch (error) {
@@ -205,12 +227,12 @@ const Workspace: React.FC<WorkspaceProps> = ({
   };
   
   const handleFindTheoryQuestions = async () => {
-      if (!subject || !selectedChapter || !selectedSubtopic || !questionCriteria || isLoading) return;
+      if (!subject || selectedChapters.length === 0 || !questionCriteria || isLoading) return;
       setIsLoading(true);
       setGeneratedContent([]);
       try {
-          const fullTopic = `${selectedChapter} - ${selectedSubtopic}`;
-          const result = await findSpecificPastPaperQuestions(subject, fullTopic, questionCriteria, 3, yearRange); // Default 3 Qs for specific search, passed yearRange
+          const fullTopic = getCombinedTopicString();
+          const result = await findSpecificPastPaperQuestions(subject, fullTopic, questionCriteria, theoryCount, yearRange);
           setGeneratedContent([result]);
           if (subject && onSavePastPapers && Array.isArray(result.content) && result.content.length > 0) {
             onSavePastPapers(subject, result.content as PastPaperQuestion[]);
@@ -309,6 +331,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
   const igcseTools = [
     { label: 'Brief Summary', type: 'brief-summary' as const },
     { label: 'Detailed Summary', type: 'detailed-summary' as const },
+    { label: 'Flashcards', type: 'flashcards' as const },
     { label: 'MCQs', type: 'mcqs' as const },
     { label: 'True/False', type: 'true-false' as const },
     { label: 'Past Papers Q&A', type: 'past-papers' as const },
@@ -317,6 +340,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
   const generalTools = [
       { label: 'Brief Summary', type: 'brief-summary' as const },
       { label: 'Detailed Summary', type: 'detailed-summary' as const },
+      { label: 'Flashcards', type: 'flashcards' as const },
       { label: 'MCQs', type: 'mcqs' as const },
       { label: 'True/False', type: 'true-false' as const },
   ];
@@ -324,14 +348,56 @@ const Workspace: React.FC<WorkspaceProps> = ({
   const tools = subject ? igcseTools : generalTools;
 
   // --- Derived state for MCQ topic selection ---
-  // Fix: Use exact subject key lookup instead of fuzzy text matching to ensure correct topics are loaded.
   const subjectKey = Object.keys(IGCSE_SUBJECTS).find(key => IGCSE_SUBJECTS[key as IgcseSubjectKey] === subject) as IgcseSubjectKey | undefined;
-  const availableChapters = (subjectKey && SUBJECT_TOPICS[subjectKey]) || [];
-  const availableSubtopics = availableChapters.find(c => c.name === selectedChapter)?.subtopics || [];
+  
+  const availableChapters = useMemo(() => {
+      return (subjectKey && SUBJECT_TOPICS[subjectKey]) || [];
+  }, [subjectKey]);
 
-  const handleChapterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setSelectedChapter(e.target.value);
-    setSelectedSubtopic(''); // Reset subtopic when chapter changes
+  // Derived available subtopics based on ALL selected chapters
+  const availableSubtopics = useMemo(() => {
+      return availableChapters
+        .filter(c => selectedChapters.includes(c.name))
+        .flatMap(c => c.subtopics);
+  }, [availableChapters, selectedChapters]);
+
+
+  const toggleChapter = (chapterName: string) => {
+      setSelectedChapters(prev => {
+          if (prev.includes(chapterName)) {
+              // Unselect: Remove chapter AND remove its subtopics from selection
+              const newChapters = prev.filter(c => c !== chapterName);
+              // We need to filter subtopics to remove those that belong ONLY to this chapter.
+              // Simpler approach: Remove all subtopics belonging to this chapter.
+              const chapterObj = availableChapters.find(c => c.name === chapterName);
+              if (chapterObj) {
+                  setSelectedSubtopics(currentSubs => 
+                      currentSubs.filter(sub => !chapterObj.subtopics.includes(sub))
+                  );
+              }
+              return newChapters;
+          } else {
+              return [...prev, chapterName];
+          }
+      });
+  };
+
+  const toggleSubtopic = (subtopicName: string) => {
+      setSelectedSubtopics(prev => {
+          if (prev.includes(subtopicName)) {
+              return prev.filter(s => s !== subtopicName);
+          } else {
+              return [...prev, subtopicName];
+          }
+      });
+  };
+
+  const handleSelectAllSubtopics = () => {
+      if (selectedSubtopics.length === availableSubtopics.length) {
+          setSelectedSubtopics([]);
+      } else {
+          setSelectedSubtopics(availableSubtopics);
+      }
   };
   
   // Check if subject typically has MCQs
@@ -377,31 +443,55 @@ const Workspace: React.FC<WorkspaceProps> = ({
                         </button>
                     </div>
 
+                    {/* Chapter Multi-Select */}
                     <div>
-                        <label htmlFor="chapter" className="block text-sm font-medium text-gray-700">Chapter</label>
-                        <select
-                            id="chapter"
-                            value={selectedChapter}
-                            onChange={handleChapterChange}
-                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-white border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                        >
-                            <option value="" disabled>Select a chapter</option>
-                            {availableChapters.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                        </select>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Select Chapters ({selectedChapters.length})</label>
+                        <div className="border border-gray-300 rounded-md max-h-48 overflow-y-auto bg-white p-2 shadow-inner">
+                            {availableChapters.map(c => (
+                                <label key={c.name} className="flex items-start space-x-3 mb-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={selectedChapters.includes(c.name)}
+                                        onChange={() => toggleChapter(c.name)}
+                                        className="mt-1 h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500" 
+                                    />
+                                    <span className="text-sm text-gray-700 leading-tight">{c.name}</span>
+                                </label>
+                            ))}
+                        </div>
                     </div>
 
+                    {/* Subtopic Multi-Select */}
                     <div>
-                        <label htmlFor="subtopic" className="block text-sm font-medium text-gray-700">Subtopic</label>
-                        <select
-                            id="subtopic"
-                            value={selectedSubtopic}
-                            onChange={(e) => setSelectedSubtopic(e.target.value)}
-                            disabled={!selectedChapter}
-                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-white border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md disabled:bg-gray-50"
-                        >
-                            <option value="" disabled>Select a subtopic</option>
-                            {availableSubtopics.map(sub => <option key={sub} value={sub}>{sub}</option>)}
-                        </select>
+                        <div className="flex justify-between items-center mb-2">
+                             <label className="block text-sm font-medium text-gray-700">Select Subtopics ({selectedSubtopics.length})</label>
+                             {availableSubtopics.length > 0 && (
+                                 <button 
+                                     onClick={handleSelectAllSubtopics}
+                                     className="text-xs text-blue-600 hover:text-blue-800 underline"
+                                 >
+                                     {selectedSubtopics.length === availableSubtopics.length ? 'Deselect All' : 'Select All'}
+                                 </button>
+                             )}
+                        </div>
+                        
+                        <div className={`border border-gray-300 rounded-md max-h-48 overflow-y-auto bg-white p-2 shadow-inner ${availableSubtopics.length === 0 ? 'bg-gray-100 opacity-70' : ''}`}>
+                            {availableSubtopics.length === 0 ? (
+                                <p className="text-xs text-gray-500 text-center py-4">Select a chapter to see subtopics</p>
+                            ) : (
+                                availableSubtopics.map(sub => (
+                                    <label key={sub} className="flex items-start space-x-3 mb-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={selectedSubtopics.includes(sub)}
+                                            onChange={() => toggleSubtopic(sub)}
+                                            className="mt-1 h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500" 
+                                        />
+                                        <span className="text-sm text-gray-700 leading-tight">{sub}</span>
+                                    </label>
+                                ))
+                            )}
+                        </div>
                     </div>
 
                     {practiceMode === 'mcq' ? (
@@ -414,7 +504,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
                                         id="q_count"
                                         value={mcqCount}
                                         min="1"
-                                        max="10"
+                                        max="20"
                                         onChange={(e) => setMcqCount(parseInt(e.target.value, 10))}
                                         className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-gray-900"
                                     />
@@ -439,12 +529,12 @@ const Workspace: React.FC<WorkspaceProps> = ({
                             </div>
 
                             {hasOfficialMcqs ? (
-                                <button onClick={handleFindMcqs} disabled={isLoading || !selectedChapter || !selectedSubtopic} className="w-full flex items-center justify-center px-4 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+                                <button onClick={handleFindMcqs} disabled={isLoading || selectedChapters.length === 0} className="w-full flex items-center justify-center px-4 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
                                     {isLoading ? <><LoadingSpinner /><span className="ml-2">Finding...</span></> : 'Find Past Paper MCQs'}
                                 </button>
                             ) : (
                                 <>
-                                    <button onClick={handleGenerateMcqsFromTopic} disabled={isLoading || !selectedChapter || !selectedSubtopic} className="w-full flex items-center justify-center px-4 py-3 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+                                    <button onClick={handleGenerateMcqsFromTopic} disabled={isLoading || selectedChapters.length === 0} className="w-full flex items-center justify-center px-4 py-3 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
                                         {isLoading ? <><LoadingSpinner /><span className="ml-2">Generating...</span></> : 'Convert Topic to MCQs'}
                                     </button>
                                     <p className="text-xs text-gray-500 mt-2">
@@ -466,26 +556,40 @@ const Workspace: React.FC<WorkspaceProps> = ({
                                     className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-gray-900"
                                 />
                             </div>
-                            <div>
-                                <label htmlFor="year_range_theory" className="block text-sm font-medium text-gray-700">Year Range</label>
-                                <select 
-                                        id="year_range_theory"
-                                        value={yearRange}
-                                        onChange={(e) => setYearRange(parseInt(e.target.value, 10))}
-                                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-white border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                                >
-                                        <option value={1}>Last year (2025)</option>
-                                        <option value={2}>Last 2 years (2024-25)</option>
-                                        <option value={3}>Last 3 years (2023-25)</option>
-                                        <option value={5}>Last 5 years (2021-25)</option>
-                                        <option value={8}>Last 8 years (2018-25)</option>
-                                </select>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="theory_count" className="block text-sm font-medium text-gray-700">Questions</label>
+                                    <input 
+                                        type="number" 
+                                        id="theory_count"
+                                        value={theoryCount}
+                                        min="1"
+                                        max="10"
+                                        onChange={(e) => setTheoryCount(parseInt(e.target.value, 10))}
+                                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white text-gray-900"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="year_range_theory" className="block text-sm font-medium text-gray-700">Year Range</label>
+                                    <select 
+                                            id="year_range_theory"
+                                            value={yearRange}
+                                            onChange={(e) => setYearRange(parseInt(e.target.value, 10))}
+                                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-white border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                    >
+                                            <option value={1}>Last year (2025)</option>
+                                            <option value={2}>Last 2 years (2024-25)</option>
+                                            <option value={3}>Last 3 years (2023-25)</option>
+                                            <option value={5}>Last 5 years (2021-25)</option>
+                                            <option value={8}>Last 8 years (2018-25)</option>
+                                    </select>
+                                </div>
                             </div>
-                            <button onClick={handleFindTheoryQuestions} disabled={isLoading || !selectedChapter || !selectedSubtopic || !questionCriteria} className="w-full flex items-center justify-center px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
+                            <button onClick={handleFindTheoryQuestions} disabled={isLoading || selectedChapters.length === 0 || !questionCriteria} className="w-full flex items-center justify-center px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all">
                                 {isLoading ? <><LoadingSpinner /><span className="ml-2">Searching...</span></> : 'Find Specific Questions'}
                             </button>
                              <p className="text-xs text-gray-500 mt-2">
-                                Find questions matching specific criteria (e.g. marks) for this topic.
+                                Find questions matching specific criteria (e.g. marks) for these topics.
                             </p>
                         </>
                     )}

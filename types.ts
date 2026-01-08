@@ -36,6 +36,11 @@ export interface TrueFalseQuestion {
   answer: boolean; // true or false
 }
 
+export interface Flashcard {
+  term: string;
+  definition: string;
+}
+
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
 export interface PastPaperQuestion {
@@ -58,6 +63,7 @@ export type GeneratedContent =
   | { type: 'detailed-summary'; content: string }
   | { type: 'mcqs'; content: McqQuestion[] }
   | { type: 'true-false'; content: TrueFalseQuestion[] }
+  | { type: 'flashcards'; content: Flashcard[] }
   | { type: 'past-papers'; content: PastPaperQuestion[] }
   | { type: 'sourced-mcqs'; content: SourcedMcqQuestion[] };
 
